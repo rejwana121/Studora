@@ -1,0 +1,35 @@
+# Studora monorepo root .gitignore
+# mobile/ and backend/ also carry their own tool-generated .gitignore files;
+# this root file is the safety net so nothing generated/secret is ever committed.
+
+# --- secrets / env ---
+.env
+*.env
+!*.env.example
+
+# --- mobile (Expo / Node) ---
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/expo-env.d.ts
+mobile/*.tsbuildinfo
+mobile/ios/
+mobile/android/
+
+# --- backend (Python) ---
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/*.db
+backend/*.sqlite3
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.log
+
+# --- local Claude Code tool settings (machine-specific, not project source) ---
+.claude/settings.local.json

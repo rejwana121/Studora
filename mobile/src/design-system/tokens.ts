@@ -1,0 +1,138 @@
+/**
+ * Studora design tokens — single source of truth for colour, spacing, radius,
+ * shadow and typography. Values are transcribed exactly from
+ * docs/phase1/06-design-tokens.md (the approved Phase 1 visual system).
+ * No screen may hardcode a raw colour/spacing value — import from here.
+ */
+
+export const color = {
+  primary: {
+    violet: '#5D3FD3',
+    violetStrong: '#4A2FB0',
+  },
+  secondary: {
+    teal: '#14B8A6',
+    tealStrong: '#0C7A77',
+  },
+  accent: {
+    coral: '#FF6B57',
+    coralStrong: '#C23A28',
+    warmYellow: '#FFC94D',
+    warmYellowText: '#96650F',
+    lavender: '#EDE7FB',
+    mint: '#DFF5EC',
+  },
+  background: {
+    main: '#F7F4FC',
+    card: '#FFFFFF',
+  },
+  text: {
+    primary: '#1B1730',
+    secondary: '#5B5770',
+    onFill: '#FFFFFF',
+    disabled: '#A8A3BC',
+  },
+  border: {
+    divider: '#E2DEEE',
+  },
+  success: {
+    strong: '#157A52',
+  },
+  warning: {
+    strong: '#96650F',
+  },
+  info: {
+    bg: '#DFF7F5',
+    text: '#0C7A77',
+  },
+  risk: {
+    low: { bg: '#DFF5EC', text: '#157A52' },
+    moderate: { bg: '#FFF3D6', text: '#96650F' },
+    high: { bg: '#FFE4DF', text: '#A82F1F' },
+    critical: { bg: '#9A1F1F', text: '#FFFFFF' },
+  },
+} as const;
+
+export const gradient = {
+  hero: ['#5D3FD3', '#14B8A6'] as const, // 135deg
+  premium: ['#4A2FB0', '#C23A28'] as const, // 135deg
+};
+
+export const space = {
+  xs: 4,
+  sm: 8,
+  md: 16,
+  lg: 24,
+  xl: 32,
+  xxl: 48,
+} as const;
+
+export const radius = {
+  control: 10,
+  card: 20,
+  pill: 999,
+} as const;
+
+export const elevation = {
+  card: {
+    shadowColor: 'rgba(93,63,211,0.08)',
+    offsetY: 4,
+    blur: 12,
+  },
+  raised: {
+    shadowColor: 'rgba(93,63,211,0.14)',
+    offsetY: 8,
+    blur: 24,
+  },
+} as const;
+
+export const touchTarget = {
+  min: 44,
+} as const;
+
+export const type = {
+  display: { fontSize: 28, lineHeight: 34, fontWeight: '700' as const },
+  heading: { fontSize: 20, lineHeight: 26, fontWeight: '600' as const },
+  subheading: { fontSize: 17, lineHeight: 22, fontWeight: '600' as const },
+  body: { fontSize: 15, lineHeight: 22, fontWeight: '400' as const },
+  caption: { fontSize: 13, lineHeight: 18, fontWeight: '400' as const },
+  label: { fontSize: 14, lineHeight: 18, fontWeight: '500' as const },
+} as const;
+
+/** Task type -> colour token key, per docs/phase1/06-design-tokens.md §6.3 */
+export const taskTypeColor = {
+  Assignment: color.primary.violet,
+  Quiz: color.secondary.teal,
+  Project: color.accent.coral,
+  Presentation: color.accent.warmYellow,
+  Lab: color.success.strong,
+  Midterm: color.primary.violetStrong,
+  FinalExam: color.accent.coralStrong,
+  StudySession: color.secondary.tealStrong,
+  Other: color.text.secondary,
+} as const;
+
+/** Priority dot colour — always render with the text label alongside, never colour alone. */
+export const priorityColor = {
+  Low: color.accent.mint,
+  Medium: color.accent.warmYellow,
+  High: color.accent.coral,
+} as const;
+
+/** Workload-risk level -> chip tokens — always paired with a text label and icon. */
+export const riskLevelTokens = color.risk;
+
+export const tokens = {
+  color,
+  gradient,
+  space,
+  radius,
+  elevation,
+  touchTarget,
+  type,
+  taskTypeColor,
+  priorityColor,
+  riskLevelTokens,
+};
+
+export default tokens;
