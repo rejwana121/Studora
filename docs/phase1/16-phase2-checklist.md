@@ -14,7 +14,7 @@ Phase 2 = Foundation (Master Prompt). Nothing below is executed during Phase 1; 
 - [ ] Create directory skeleton per [08-repository-structure.md](08-repository-structure.md).
 
 ## 16.3 Mobile foundation
-- [ ] Scaffold Expo app pinned to **SDK 57**, TypeScript, Expo Router.
+- [x] Scaffold Expo app pinned to **SDK 54** (corrected from an initial SDK 57 pin — see `15-tooling-versions.md` amendment — after physical iPhone Expo Go testing found the installed client only supports SDK 54), TypeScript, Expo Router.
 - [ ] Add `mobile/.env.example` (Supabase URL/anon key placeholders, API base URL).
 - [ ] Implement `design-system/tokens.ts` from [06-design-tokens.md](06-design-tokens.md).
 - [ ] Set up typed API client skeleton (no endpoints wired yet — that starts Phase 3+).

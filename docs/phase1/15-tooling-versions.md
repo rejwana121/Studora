@@ -2,6 +2,8 @@
 
 Per constraint: verified against official documentation during Phase 1; **documented only** — no install, no global version change happens until Phase 2, and even then only with the user's awareness.
 
+> **Amendment (post-Phase-2, physical device correction)**: physical iPhone testing found the user's installed Expo Go client (iOS 26.5, Expo Go build 1017756) supports **SDK 54 only**, with no App Store update available to a newer client. The assumption below that "targeting the latest SDK keeps Expo Go compatible" was therefore wrong in practice — Expo Go compatibility must be verified against the *actual installed client*, not assumed from "latest SDK = current Expo Go." The mobile project has been realigned to **SDK 54** accordingly (§15.2, §15.4 corrected below); this is a tooling/version correction only, not a change to product scope.
+
 ## 15.1 Currently installed on this machine (checked in Phase 0/1, unchanged)
 | Tool | Installed | Source |
 | --- | --- | --- |
@@ -15,11 +17,11 @@ Per constraint: verified against official documentation during Phase 1; **docume
 ## 15.2 Official compatibility findings (verified via docs.expo.dev and web research, July 2026)
 | Item | Official recommendation | Fit with installed toolchain |
 | --- | --- | --- |
-| Expo SDK | Latest stable is **57.0.0** (React Native 0.86, React 19.2.3) | Recommend targeting SDK 57 — **required** for the user's iPhone Expo Go app, since Expo Go only runs the current SDK |
-| Node.js minimum for Expo SDK 57 | **≥ 22.13.x** | Installed v24.18.0 **satisfies** this minimum — no downgrade needed. Recommend pinning the project to a specific Node version via `.nvmrc`/`engines` in Phase 2 for reproducibility, not because v24 is incompatible |
+| Expo SDK | Project pinned to **54.0.36** (React Native 0.81.5, React 19.1.0) — corrected from an initial 57.0.0 pin after physical-device testing (see amendment above) | **Required** version for the user's installed Expo Go client; confirmed empirically, not assumed from "latest SDK" |
+| Node.js minimum for Expo SDK 54 | **≥ 20.19.4** | Installed v24.18.0 **satisfies** this minimum — no downgrade needed |
 | Android build JDK | Expo SDK 50+ / current Android Gradle Plugin requires **JDK 17** to run Gradle's compile pipeline | Installed JDK 26 is newer than AGP currently targets; **do not** rely on the global JDK 26 for Android Gradle builds — recommend a project-local/JAVA_HOME override to a JDK 17 distribution only when an Android build step is actually needed (Phase 7), not for Expo Go usage (which needs no local Java at all) |
-| iOS build tooling | Xcode 26.4+ required for local iOS native builds | Not applicable — dev machine is Windows; iOS testing is via **Expo Go only** (no local iOS build), consistent with constraint #7 |
-| Expo Go SDK support | Expo Go (App Store/Play Store) supports **the current SDK only**; per-SDK-version Expo Go installs exist for emulators/Android but not for physical iOS devices | Project **must** stay on the latest Expo SDK for the user's iPhone Expo Go testing to keep working through the build window |
+| iOS build tooling | Not applicable — dev machine is Windows; iOS testing is via **Expo Go only** (no local iOS build), consistent with constraint #7 | Unaffected by the SDK 54 realignment |
+| Expo Go SDK support | Expo Go's installed-client version determines the supported SDK, not the reverse — "latest SDK" is only safe when the client is confirmed current. The user's client is fixed at SDK 54 support with no update available | Project **must** stay pinned to SDK 54 (not "latest") until the user's Expo Go client itself updates; re-verify before any future SDK bump |
 | Android notification full-fidelity testing | Local notifications work in Expo Go; full background/locked/killed-app + sound verification needs a development build | Free path: **EAS free tier** (15 Android builds/month, no card) or a **local Android Studio build** (free, needs JDK 17 + Android SDK when that phase arrives) |
 | Python for FastAPI | FastAPI (current stable ~0.136.x) requires Python ≥3.10; **3.12/3.13** recommended as the 2026 baseline for perf/typing | Installed 3.11.0 **is compatible** (meets the ≥3.10 minimum) — recommend keeping 3.11 for MVP to avoid an extra install; noting 3.12+ as an optional future upgrade, not required |
 | pytest | Current stable ~9.0.x | No conflict; installed via project virtualenv in Phase 2 |
@@ -30,9 +32,9 @@ Per constraint: verified against official documentation during Phase 1; **docume
 ## 15.3 Risk flagged from this research
 Supabase free-tier projects pause after 7 days of inactivity. Given the compressed 14-day build window this is unlikely to trigger during active development, but if there is ever a >7-day gap before the 5 August demo, the project must be pinged (any request) to un-pause it in advance — noted here so it isn't a surprise on demo day.
 
-## 15.4 Phase 2 action items derived from this research (not executed now)
-1. Scaffold the Expo app on **SDK 57** specifically (not "latest" unpinned, to keep Expo Go compatibility predictable through the build window).
-2. Add a `.nvmrc`/`engines` field pinning Node ≥22.13 (compatible with the already-installed v24.18.0 — no reinstall required).
-3. Do **not** touch the global JDK; only set a project/gradle-local JDK 17 `JAVA_HOME` override when an Android build step is first needed (Phase 7), per constraint #8 (no global Java change) and constraint #4 (no unnecessary setup).
-4. Keep Python 3.11 for the backend virtualenv unless a specific incompatibility appears.
-5. Re-confirm these exact figures at the start of Phase 2 in case of an SDK point-release between now and then (Expo ships frequently).
+## 15.4 Phase 2 action items (status after the SDK 54 correction)
+1. ~~Scaffold the Expo app on SDK 57~~ — **corrected**: project is pinned to **SDK 54** (54.0.36), matching the user's actual installed Expo Go client. Done via `npx expo install expo@^54.0.0` + `npx expo install --fix`, per the official Expo SDK downgrade procedure.
+2. Add a `.nvmrc`/`engines` field pinning Node ≥20.19.4 (compatible with the already-installed v24.18.0 — no reinstall required). Still pending as a Should-tier reproducibility item.
+3. Do **not** touch the global JDK; only set a project/gradle-local JDK 17 `JAVA_HOME` override when an Android build step is first needed (Phase 7), per constraint #8 (no global Java change) and constraint #4 (no unnecessary setup). Unaffected by the SDK correction.
+4. Keep Python 3.11 for the backend virtualenv unless a specific incompatibility appears. Unaffected by the SDK correction.
+5. **Lesson learned**: before pinning any Expo SDK version going forward, verify it against the actual installed Expo Go client version on the test device(s) in use, not against "whatever docs.expo.dev calls latest" — the two are not guaranteed to match, as this correction demonstrated.
