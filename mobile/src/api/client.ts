@@ -2,15 +2,11 @@ import { env } from '../lib/env';
 import type { ApiResult } from '../types/api';
 
 /**
- * Typed API client skeleton (Phase 2 — Foundation only).
- * No domain endpoints are wired here yet; per-domain modules (subjects,
- * tasks, planner, sessions, workload, recommendations, notifications,
- * dashboard, plans, feedback) are added starting Phase 3+, each calling
- * `request()` below and matching docs/phase1/10-api-contract.md.
- *
- * Auth: the bearer token is attached once Supabase auth exists (Phase 3);
- * this client accepts an optional token now so callers don't need to change
- * shape later.
+ * Typed API client. Per-domain modules (profile now; subjects, tasks,
+ * planner, sessions, workload, recommendations, notifications, dashboard,
+ * plans, feedback in later phases) call `request()` below, matching
+ * docs/phase1/10-api-contract.md. Callers pass the current Supabase session's
+ * access token as `token`; the backend independently verifies it.
  */
 
 interface RequestOptions {

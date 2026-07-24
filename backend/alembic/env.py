@@ -9,6 +9,7 @@ from alembic import context
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+import app.models  # noqa: E402,F401 — registers domain models on SQLModel.metadata
 from app.core.config import settings  # noqa: E402
 
 # this is the Alembic Config object, which provides
@@ -24,8 +25,6 @@ config.set_main_option("sqlalchemy.url", settings.database_url)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Domain models register themselves on SQLModel.metadata once added
-# starting Phase 3+; Phase 2 has no models, so this baseline is empty.
 target_metadata = SQLModel.metadata
 
 # other values from the config, defined by the needs of env.py,

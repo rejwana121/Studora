@@ -86,6 +86,17 @@ export const elevation = {
   },
 } as const;
 
+/** Cross-platform RN shadow props from an `elevation.*` token (iOS/web use shadow*, Android uses elevation). */
+export function shadowStyle(e: { shadowColor: string; offsetY: number; blur: number }, androidElevation = 6) {
+  return {
+    shadowColor: e.shadowColor,
+    shadowOffset: { width: 0, height: e.offsetY },
+    shadowOpacity: 1,
+    shadowRadius: e.blur,
+    elevation: androidElevation,
+  } as const;
+}
+
 export const touchTarget = {
   min: 44,
 } as const;

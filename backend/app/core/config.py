@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://user:password@localhost:5432/studora"
     supabase_url: str = ""
     supabase_jwt_secret: str = ""
+    supabase_jwt_algorithm: str = "HS256"
+    supabase_jwt_audience: str = "authenticated"
 
 
 settings = Settings()

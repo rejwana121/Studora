@@ -4,7 +4,7 @@ Intelligent academic assistant for university students — task/deadline managem
 
 This is a greenfield monorepo. Authoritative product requirements live in [`docs/`](docs/) (Business Vision, BRD, PRD) and [`docs/Studora_Claude_Master_Prompt_Compact_Final.md`](docs/Studora_Claude_Master_Prompt_Compact_Final.md) (delivery process). Full Phase 1 planning/architecture is in [`docs/phase1/`](docs/phase1/).
 
-**Status: Phase 2 — Foundation.** No authentication, business features, or real credentials exist yet.
+**Status: Phase 3 — Authentication/data.** Supabase auth wiring, `profiles` table + RLS, and JWT-verified `/profile` API exist; no real Supabase project credentials are configured yet (see Phase 3 Completion Report), and subjects/tasks/planner/focus/workload/notifications/subscriptions are not built yet.
 
 ## Structure
 ```
@@ -29,7 +29,7 @@ npm run lint                # expo lint
 npm run doctor              # npx expo-doctor
 npm start                   # expo start — scan the QR code with Expo Go on your iPhone
 ```
-Copy `mobile/.env.example` to `mobile/.env` and fill in real values once they exist (Phase 3+). No real Supabase project is wired yet.
+Copy `mobile/.env.example` to `mobile/.env` and fill in real values once a Supabase project exists (see "Supabase project setup" below). Without real values the app still boots (placeholder client, per the Phase 3 Completion Report) but sign up/sign in cannot reach a real backend.
 
 ## Backend — run locally
 ```bash
@@ -38,7 +38,14 @@ python -m venv .venv                        # already created during scaffold
 ./.venv/Scripts/pip install -r requirements.txt   # (.venv/bin/pip on macOS/Linux)
 ./.venv/Scripts/python -m uvicorn app.main:app --reload   # http://127.0.0.1:8000/health, /docs, /openapi.json
 ```
-Copy `backend/.env.example` to `backend/.env` and fill in real values once they exist (Phase 3+). No real Supabase project is wired yet.
+Copy `backend/.env.example` to `backend/.env` and fill in real values once a Supabase project exists (see "Supabase project setup" below).
+
+## Supabase project setup (needed for live auth testing)
+1. Create a free-tier project at supabase.com (no card required).
+2. Project Settings → API: copy the Project URL and `anon` public key into `mobile/.env` (`EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`).
+3. Project Settings → API → JWT Settings: copy the JWT secret into `backend/.env` (`SUPABASE_JWT_SECRET`); copy the connection string (Settings → Database) into `DATABASE_URL`.
+4. Run `alembic upgrade head` against that connection string to create `profiles` with RLS enabled.
+5. Free-tier projects auto-pause after 7 days of inactivity — any request un-pauses them (docs/phase1/15-tooling-versions.md §15.3).
 
 ### Backend checks
 ```bash
