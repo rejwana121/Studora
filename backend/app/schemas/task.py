@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.subject import SubjectColorToken
 
@@ -81,9 +81,12 @@ class TaskCreate(BaseModel):
     @field_validator("deadline")
     @classmethod
     def deadline_must_be_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
+        if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("deadline must be timezone-aware")
         return value.astimezone(UTC)
+
+
+_TASK_UPDATE_NON_NULLABLE = ("title", "type", "deadline", "priority", "status")
 
 
 class TaskUpdate(BaseModel):
@@ -94,7 +97,19 @@ class TaskUpdate(BaseModel):
     (plan §5): `completed_at` from a `status` transition to/from
     `Completed`, `reschedule_count` incremented only when `deadline`
     actually changes. `extra="forbid"` also blocks a client attempt to
-    set either directly."""
+    set either directly.
+
+    A PATCH is a partial update: every field is optional so it can be
+    omitted. But whether an explicit `null` is accepted for a field that
+    IS present depends on whether the underlying column is nullable:
+    `subject_id`/`estimate_hours`/`notes` may be explicitly null — that's
+    a real command ("unlink subject" / "clear estimate" / "clear notes"),
+    matching their nullable columns in the data dictionary. `title`/
+    `type`/`deadline`/`priority`/`status` are NOT NULL columns — an
+    explicit null there is rejected, same reasoning as SubjectUpdate.name.
+    An entirely empty body is rejected either way, since it expresses no
+    intent.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -106,6 +121,18 @@ class TaskUpdate(BaseModel):
     estimate_hours: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     status: TaskStatus | None = None
     notes: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_empty_body_and_invalid_nulls(cls, data):
+        if not isinstance(data, dict):
+            return data
+        if not data:
+            raise ValueError("at least one field must be supplied")
+        for field in _TASK_UPDATE_NON_NULLABLE:
+            if field in data and data[field] is None:
+                raise ValueError(f"{field} cannot be null — omit it to leave unchanged")
+        return data
 
     @field_validator("title")
     @classmethod
@@ -122,6 +149,41 @@ class TaskUpdate(BaseModel):
     def deadline_must_be_aware(cls, value: datetime | None) -> datetime | None:
         if value is None:
             return value
-        if value.tzinfo is None:
+        if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("deadline must be timezone-aware")
+        return value.astimezone(UTC)
+
+
+class TaskListQuery(BaseModel):
+    """Query params for GET /tasks. extra="forbid" is what makes an
+    unrecognized ?param= 422 instead of being silently ignored — FastAPI's
+    query-parameter-model binding validates the whole raw query string
+    against this model, same as a JSON body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: TaskStatus | None = None
+    subject_id: uuid.UUID | None = None
+    type: TaskType | None = None
+    due_before: datetime | None = None
+    due_after: datetime | None = None
+    search: str | None = None
+    sort: Literal[
+        "deadline_asc",
+        "deadline_desc",
+        "priority_asc",
+        "priority_desc",
+        "created_at_asc",
+        "created_at_desc",
+    ] = "deadline_asc"
+    limit: int = Field(20, ge=1, le=100)
+    offset: int = Field(0, ge=0)
+
+    @field_validator("due_before", "due_after")
+    @classmethod
+    def bound_must_be_aware(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return value
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("must be timezone-aware")
         return value.astimezone(UTC)
