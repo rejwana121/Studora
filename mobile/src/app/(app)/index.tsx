@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { getProfile } from '@/api/profile';
+import { getProfile, updateProfile } from '@/api/profile';
 import { Banner } from '@/components/banner';
 import { Button } from '@/components/button';
 import { ThemedText } from '@/components/themed-text';
@@ -24,10 +24,17 @@ export default function AuthenticatedHome() {
 
     let isMounted = true;
     setIsLoading(true);
-    getProfile(session.access_token).then((result) => {
+    getProfile(session.access_token).then(async (result) => {
       if (!isMounted) return;
       if (result.ok) {
-        setProfile(result.data);
+        let nextProfile = result.data;
+        const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (deviceTimezone && deviceTimezone !== nextProfile.timezone) {
+          const syncResult = await updateProfile(session.access_token, { timezone: deviceTimezone });
+          if (!isMounted) return;
+          if (syncResult.ok) nextProfile = syncResult.data;
+        }
+        setProfile(nextProfile);
         setLoadError(null);
       } else {
         setLoadError(result.error.message);

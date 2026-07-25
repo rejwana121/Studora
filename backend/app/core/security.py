@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Any
 
@@ -8,6 +9,8 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.errors import ApiError
+
+_logger = logging.getLogger(__name__)
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -110,6 +113,7 @@ def get_current_user(
     except jwt.exceptions.PyJWKClientError as exc:
         raise _unauthorized("Unknown signing key") from exc
     except jwt.exceptions.PyJWTError as exc:
+        _logger.warning("token validation failed: %s", type(exc).__name__)
         raise _unauthorized("Invalid token") from exc
 
     sub = payload.get("sub")
