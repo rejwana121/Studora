@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import case
 from sqlmodel import Session, select
@@ -17,6 +17,10 @@ _PRIORITY_RANK = case(
     (Task.priority == "High", 2),
     else_=1,
 )
+
+# Phase-4-local: GET /tasks/today's "due soon" window (API contract §10.3).
+# A rolling UTC duration, not a calendar/local-midnight concept.
+DUE_SOON_WINDOW = timedelta(hours=72)
 
 # Fixed SQLAlchemy expression tuples only — `query.sort` is constrained to
 # this dict's keys by TaskListQuery's Literal type before it ever reaches
@@ -112,6 +116,40 @@ def get_owned_task(session: Session, user_id: uuid.UUID, task_id: uuid.UUID) -> 
     if task is None:
         raise ApiError(404, "NOT_FOUND", "Task not found")
     return task
+
+
+def get_today_view(
+    session: Session, user_id: uuid.UUID, now: datetime | None = None
+) -> dict[str, list[Task]]:
+    """One base query, partitioned in memory into four overlapping groups
+    (a task can land in several) — never a per-group query. `now` is only
+    ever passed by tests wanting a deterministic reference instant; the
+    route always lets it default to the real current time.
+
+    Each group preserves the base query's (deadline, id) order, since
+    Python's list-comprehension filtering is stable — no group needs its
+    own sort.
+    """
+    reference_now = _as_utc_instant(now) if now is not None else datetime.now(UTC)
+    statement = (
+        select(Task)
+        .where(Task.user_id == user_id, Task.status.in_(("Pending", "InProgress")))
+        .order_by(Task.deadline, Task.id)
+    )
+    pending = list(session.exec(statement))
+    overdue = [t for t in pending if _as_utc_instant(t.deadline) < reference_now]
+    due_soon = [
+        t
+        for t in pending
+        if reference_now <= _as_utc_instant(t.deadline) <= reference_now + DUE_SOON_WINDOW
+    ]
+    high_priority = [t for t in pending if t.priority == "High"]
+    return {
+        "overdue": overdue,
+        "due_soon": due_soon,
+        "pending": pending,
+        "high_priority": high_priority,
+    }
 
 
 def update_task(session: Session, user_id: uuid.UUID, task: Task, changes: TaskUpdate) -> Task:

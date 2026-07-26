@@ -717,3 +717,109 @@ def test_delete_cascades_to_subtasks(client, engine):
 
     with Session(engine) as session:
         assert session.get(Subtask, subtask_id) is None
+
+
+# --- today view ---
+
+
+def test_get_tasks_today_requires_auth(client):
+    response = client.get("/api/v1/tasks/today")
+    assert response.status_code == 401
+
+
+def test_get_tasks_today_not_captured_by_task_id_route(client):
+    response = client.get("/api/v1/tasks/today", headers=auth_headers())
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"overdue", "due_soon", "pending", "high_priority"}
+
+
+def test_get_tasks_today_high_priority_membership(client):
+    headers = auth_headers()
+    future_deadline = DEFAULT_DEADLINE + timedelta(days=1)
+    task_id = _create_task(
+        client, headers, priority="High", deadline=future_deadline.isoformat()
+    ).json()["id"]
+
+    body = client.get("/api/v1/tasks/today", headers=headers).json()
+    assert task_id in {t["id"] for t in body["high_priority"]}
+    assert task_id in {t["id"] for t in body["pending"]}
+
+
+def test_get_tasks_today_overdue_and_pending_overlap(client):
+    headers = auth_headers()
+    past_deadline = datetime(2020, 1, 1, tzinfo=UTC)
+    task_id = _create_task(client, headers, deadline=past_deadline.isoformat()).json()["id"]
+
+    body = client.get("/api/v1/tasks/today", headers=headers).json()
+    assert task_id in {t["id"] for t in body["overdue"]}
+    assert task_id in {t["id"] for t in body["pending"]}
+    assert task_id not in {t["id"] for t in body["due_soon"]}
+
+
+def test_get_tasks_today_excludes_completed_and_cancelled(client):
+    headers = auth_headers()
+    past_deadline = datetime(2020, 1, 1, tzinfo=UTC)
+    completed_id = _create_task(
+        client, headers, priority="High", deadline=past_deadline.isoformat()
+    ).json()["id"]
+    cancelled_id = _create_task(
+        client, headers, priority="High", deadline=past_deadline.isoformat()
+    ).json()["id"]
+    client.patch(
+        f"/api/v1/tasks/{completed_id}", json={"status": "Completed"}, headers=headers
+    )
+    client.patch(
+        f"/api/v1/tasks/{cancelled_id}", json={"status": "Cancelled"}, headers=headers
+    )
+
+    body = client.get("/api/v1/tasks/today", headers=headers).json()
+    all_ids = {t["id"] for group in body.values() for t in group}
+    assert completed_id not in all_ids
+    assert cancelled_id not in all_ids
+
+
+def test_get_tasks_today_empty_when_no_tasks(client):
+    body = client.get("/api/v1/tasks/today", headers=auth_headers()).json()
+    assert body == {"overdue": [], "due_soon": [], "pending": [], "high_priority": []}
+
+
+def test_get_tasks_today_two_account_isolation(client):
+    owner_headers = auth_headers(email="owner@example.com")
+    _create_task(client, owner_headers, priority="High")
+
+    intruder_headers = auth_headers(email="intruder@example.com")
+    body = client.get("/api/v1/tasks/today", headers=intruder_headers).json()
+    assert body == {"overdue": [], "due_soon": [], "pending": [], "high_priority": []}
+
+
+def test_get_tasks_today_includes_subject_snapshot_and_ordered_subtasks(client, engine):
+    owner_id = uuid.uuid4()
+    headers = auth_headers(user_id=owner_id)
+    subject_id = _create_subject(client, headers)
+    past_deadline = datetime(2020, 1, 1, tzinfo=UTC)
+    task_id = _create_task(
+        client, headers, subject_id=subject_id, deadline=past_deadline.isoformat()
+    ).json()["id"]
+
+    client.patch(f"/api/v1/subjects/{subject_id}", json={"archived": True}, headers=headers)
+
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    with Session(engine) as session:
+        second = Subtask(
+            task_id=uuid.UUID(task_id), user_id=owner_id, title="Second", created_at=t0
+        )
+        first = Subtask(
+            task_id=uuid.UUID(task_id),
+            user_id=owner_id,
+            title="First",
+            created_at=t0 - timedelta(hours=1),
+        )
+        session.add_all([second, first])
+        session.commit()
+
+    body = client.get("/api/v1/tasks/today", headers=headers).json()
+    item = next(t for t in body["overdue"] if t["id"] == task_id)
+    assert item["subject"]["id"] == subject_id
+    assert item["subject"]["archived"] is True
+    assert [s["title"] for s in item["subtasks"]] == ["First", "Second"]

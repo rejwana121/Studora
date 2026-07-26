@@ -68,6 +68,20 @@ class TaskRead(BaseModel):
     subtasks: list[SubtaskRead] = Field(default_factory=list)
 
 
+class TaskTodayView(BaseModel):
+    """GET /tasks/today — API contract §10.3's "Today-view composite
+    (pending/overdue/due-soon/high-priority)". Groups overlap by design
+    (a task can be both overdue and high_priority); see
+    app.services.task.get_today_view for the membership rules."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    overdue: list[TaskRead]
+    due_soon: list[TaskRead]
+    pending: list[TaskRead]
+    high_priority: list[TaskRead]
+
+
 class TaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

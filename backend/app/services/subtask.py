@@ -33,6 +33,26 @@ def list_subtasks(session: Session, user_id: uuid.UUID, task_id: uuid.UUID) -> l
     return list(session.exec(statement))
 
 
+def build_subtask_map(
+    session: Session, user_id: uuid.UUID, task_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[Subtask]]:
+    """Bulk loader for GET /tasks/today — one query for however many tasks
+    are being serialized, instead of one list_subtasks call per task.
+    Mirrors app.services.task.build_subject_snapshot_map's short-circuit
+    (no query at all when there are no ids to look up)."""
+    if not task_ids:
+        return {}
+    statement = (
+        select(Subtask)
+        .where(Subtask.user_id == user_id, Subtask.task_id.in_(task_ids))
+        .order_by(Subtask.created_at, Subtask.id)
+    )
+    by_task: dict[uuid.UUID, list[Subtask]] = {}
+    for subtask in session.exec(statement):
+        by_task.setdefault(subtask.task_id, []).append(subtask)
+    return by_task
+
+
 def get_owned_subtask(
     session: Session, user_id: uuid.UUID, task_id: uuid.UUID, subtask_id: uuid.UUID
 ) -> Subtask:

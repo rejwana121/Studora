@@ -6,13 +6,15 @@ from sqlmodel import Session
 
 from app.core.security import CurrentUser, get_current_user
 from app.db.session import get_session
-from app.schemas.task import TaskCreate, TaskListQuery, TaskRead, TaskUpdate
-from app.services.subtask import list_subtasks
+from app.models.task import Task
+from app.schemas.task import TaskCreate, TaskListQuery, TaskRead, TaskTodayView, TaskUpdate
+from app.services.subtask import build_subtask_map, list_subtasks
 from app.services.task import (
     build_subject_snapshot_map,
     create_task,
     delete_task,
     get_owned_task,
+    get_today_view,
     list_tasks,
     serialize_task,
     update_task,
@@ -41,6 +43,33 @@ def create_task_route(
     task = create_task(session, current_user.id, data)
     snapshots = build_subject_snapshot_map(session, current_user.id, [task])
     return serialize_task(task, snapshots.get(task.subject_id))
+
+
+@router.get("/today", response_model=TaskTodayView)
+def read_tasks_today(
+    current_user: CurrentUser = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> TaskTodayView:
+    groups = get_today_view(session, current_user.id)
+
+    unique_tasks = list({t.id: t for group in groups.values() for t in group}.values())
+    snapshots = build_subject_snapshot_map(session, current_user.id, unique_tasks)
+    subtask_map = build_subtask_map(session, current_user.id, [t.id for t in unique_tasks])
+
+    serialized_by_id: dict[uuid.UUID, TaskRead] = {
+        task.id: serialize_task(task, snapshots.get(task.subject_id), subtask_map.get(task.id, []))
+        for task in unique_tasks
+    }
+
+    def _lookup(tasks: list[Task]) -> list[TaskRead]:
+        return [serialized_by_id[t.id] for t in tasks]
+
+    return TaskTodayView(
+        overdue=_lookup(groups["overdue"]),
+        due_soon=_lookup(groups["due_soon"]),
+        pending=_lookup(groups["pending"]),
+        high_priority=_lookup(groups["high_priority"]),
+    )
 
 
 @router.get("/{task_id}", response_model=TaskRead)
