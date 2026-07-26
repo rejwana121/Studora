@@ -34,7 +34,7 @@ export default function SignInScreen() {
       setServerError(result.message ?? 'Sign in failed. Please try again.');
       return;
     }
-    router.replace('/(app)');
+    router.replace('/(app)/(tabs)');
   }
 
   return (

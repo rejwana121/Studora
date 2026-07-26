@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo/ui": "~0.2.0-beta.9",
+    "@expo/vector-icons": "^15.0.3",
+    "@react-native-community/datetimepicker": "8.4.4",
     "@supabase/supabase-js": "^2.110.8",
     "expo": "^54.0.0",
     "expo-constants": "~18.0.13",

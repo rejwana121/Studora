@@ -123,11 +123,37 @@ export const taskTypeColor = {
   Other: color.text.secondary,
 } as const;
 
+/** Task type -> human-readable display label. Raw enum values are the API
+ * contract (see TaskType); this map only affects rendering. */
+export const taskTypeLabel = {
+  Assignment: 'Assignment',
+  Quiz: 'Quiz',
+  Project: 'Project',
+  Presentation: 'Presentation',
+  Lab: 'Lab',
+  Midterm: 'Midterm',
+  FinalExam: 'Final Exam',
+  StudySession: 'Study Session',
+  Other: 'Other',
+} as const;
+
 /** Priority dot colour — always render with the text label alongside, never colour alone. */
 export const priorityColor = {
   Low: color.accent.mint,
   Medium: color.accent.warmYellow,
   High: color.accent.coral,
+} as const;
+
+/** Subject colour token -> swatch, per docs/Studora_PRD_Compact_Final.md §12
+ * ("Deep violet, teal, coral, warm yellow, lavender and mint") and
+ * app/schemas/subject.py's SubjectColorToken literal (same six, same order). */
+export const subjectColor = {
+  deepViolet: color.primary.violet,
+  teal: color.secondary.teal,
+  coral: color.accent.coral,
+  warmYellow: color.accent.warmYellow,
+  lavender: color.accent.lavender,
+  mint: color.accent.mint,
 } as const;
 
 /** Workload-risk level -> chip tokens — always paired with a text label and icon. */
@@ -142,7 +168,9 @@ export const tokens = {
   touchTarget,
   type,
   taskTypeColor,
+  taskTypeLabel,
   priorityColor,
+  subjectColor,
   riskLevelTokens,
 };
 

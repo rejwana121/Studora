@@ -61,7 +61,7 @@ export default function SignUpScreen() {
     await updateProfile(result.session.access_token, { timezone: deviceTimezone });
 
     setIsSubmitting(false);
-    router.replace('/(app)');
+    router.replace('/(app)/(tabs)');
   }
 
   return (

@@ -5,5 +5,5 @@ import { useSession } from '@/features/auth/session-context';
 export default function Index() {
   const { session } = useSession();
 
-  return <Redirect href={session ? '/(app)' : '/(auth)/welcome'} />;
+  return <Redirect href={session ? '/(app)/(tabs)' : '/(auth)/welcome'} />;
 }
