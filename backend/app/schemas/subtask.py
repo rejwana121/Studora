@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class SubtaskRead(BaseModel):
@@ -34,10 +34,28 @@ class SubtaskCreate(BaseModel):
 
 
 class SubtaskUpdate(BaseModel):
+    """PATCH /tasks/{id}/subtasks/{id} — both title and is_complete are
+    NOT NULL columns (data dictionary §9.4), so unlike TaskUpdate there
+    is no nullable-field carve-out: an explicit null for either supplied
+    field is rejected, same reasoning as SubjectUpdate. An entirely
+    empty body is rejected either way, since it expresses no intent."""
+
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = None
     is_complete: bool | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_empty_body_and_explicit_nulls(cls, data):
+        if not isinstance(data, dict):
+            return data
+        if not data:
+            raise ValueError("at least one field must be supplied")
+        for field in ("title", "is_complete"):
+            if field in data and data[field] is None:
+                raise ValueError(f"{field} cannot be null — omit it to leave unchanged")
+        return data
 
     @field_validator("title")
     @classmethod

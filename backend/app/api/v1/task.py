@@ -7,6 +7,7 @@ from sqlmodel import Session
 from app.core.security import CurrentUser, get_current_user
 from app.db.session import get_session
 from app.schemas.task import TaskCreate, TaskListQuery, TaskRead, TaskUpdate
+from app.services.subtask import list_subtasks
 from app.services.task import (
     build_subject_snapshot_map,
     create_task,
@@ -50,7 +51,8 @@ def read_task(
 ) -> TaskRead:
     task = get_owned_task(session, current_user.id, task_id)
     snapshots = build_subject_snapshot_map(session, current_user.id, [task])
-    return serialize_task(task, snapshots.get(task.subject_id))
+    subtasks = list_subtasks(session, current_user.id, task.id)
+    return serialize_task(task, snapshots.get(task.subject_id), subtasks)
 
 
 @router.patch("/{task_id}", response_model=TaskRead)
@@ -63,7 +65,8 @@ def patch_task(
     task = get_owned_task(session, current_user.id, task_id)
     task = update_task(session, current_user.id, task, changes)
     snapshots = build_subject_snapshot_map(session, current_user.id, [task])
-    return serialize_task(task, snapshots.get(task.subject_id))
+    subtasks = list_subtasks(session, current_user.id, task.id)
+    return serialize_task(task, snapshots.get(task.subject_id), subtasks)
 
 
 @router.delete("/{task_id}", status_code=204)

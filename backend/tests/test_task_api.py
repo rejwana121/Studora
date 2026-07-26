@@ -402,6 +402,62 @@ def test_get_task_detail_includes_archived_subject_snapshot(client):
     assert body["subject"]["archived"] is True
 
 
+def test_get_task_detail_includes_subtasks_in_created_at_id_order(client, engine):
+    owner_id = uuid.uuid4()
+    headers = auth_headers(user_id=owner_id)
+    task_id = _create_task(client, headers).json()["id"]
+
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    with Session(engine) as session:
+        first = Subtask(task_id=uuid.UUID(task_id), user_id=owner_id, title="First", created_at=t0)
+        # Same created_at as `first` — order between these two must be
+        # decided by id, not by insertion order (same lesson as list
+        # pagination elsewhere: never assume timestamp ties break in
+        # creation order).
+        second = Subtask(
+            task_id=uuid.UUID(task_id), user_id=owner_id, title="Second", created_at=t0
+        )
+        third = Subtask(
+            task_id=uuid.UUID(task_id),
+            user_id=owner_id,
+            title="Third",
+            created_at=t0.replace(hour=13),
+        )
+        session.add_all([first, second, third])
+        session.commit()
+        ids_by_title = {first.title: first.id, second.title: second.id, third.title: third.id}
+
+    response = client.get(f"/api/v1/tasks/{task_id}", headers=headers)
+    assert response.status_code == 200
+    titles = [s["title"] for s in response.json()["subtasks"]]
+    expected_first_two = sorted(["First", "Second"], key=lambda title: ids_by_title[title])
+    assert titles == [*expected_first_two, "Third"]
+
+
+def test_get_task_detail_returns_empty_subtasks_list_when_none_exist(client):
+    headers = auth_headers()
+    task_id = _create_task(client, headers).json()["id"]
+    response = client.get(f"/api/v1/tasks/{task_id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["subtasks"] == []
+
+
+def test_get_task_detail_never_exposes_another_users_subtasks(client, engine):
+    owner_headers = auth_headers(email="owner@example.com")
+    task_id = _create_task(client, owner_headers).json()["id"]
+
+    with Session(engine) as session:
+        intruder_subtask = Subtask(
+            task_id=uuid.UUID(task_id), user_id=uuid.uuid4(), title="Not yours"
+        )
+        session.add(intruder_subtask)
+        session.commit()
+
+    response = client.get(f"/api/v1/tasks/{task_id}", headers=owner_headers)
+    assert response.status_code == 200
+    assert response.json()["subtasks"] == []
+
+
 def test_get_task_detail_nonexistent_returns_404(client):
     response = client.get(f"/api/v1/tasks/{uuid.uuid4()}", headers=auth_headers())
     assert response.status_code == 404

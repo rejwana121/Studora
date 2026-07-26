@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.subject import SubjectColorToken
+from app.schemas.subtask import SubtaskRead
 
 # Canonical enum values — exact casing from docs/phase1/09-data-dictionary.md
 # §9.3, cross-checked against mobile/src/design-system/tokens.ts's existing
@@ -41,6 +42,13 @@ class TaskSubjectSnapshot(BaseModel):
 
 
 class TaskRead(BaseModel):
+    """`subtasks` is populated (ordered by created_at, id) only by the
+    detail route (GET /tasks/{id}) and by PATCH /tasks/{id} — both
+    single-row responses, per API contract §10.3 ("Detail incl.
+    subtasks"). The list route (GET /tasks) leaves it as the default
+    empty list rather than loading every task's subtasks per row; a
+    freshly created task (POST /tasks) has none yet either way."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -57,6 +65,7 @@ class TaskRead(BaseModel):
     reschedule_count: int
     created_at: datetime
     updated_at: datetime
+    subtasks: list[SubtaskRead] = Field(default_factory=list)
 
 
 class TaskCreate(BaseModel):

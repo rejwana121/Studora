@@ -70,6 +70,24 @@ def test_update_allows_omitted_is_complete():
     assert update.is_complete is None
 
 
+# --- empty body / explicit-null rejection (SubtaskUpdate) ---
+
+
+def test_update_rejects_empty_body():
+    with pytest.raises(ValidationError):
+        SubtaskUpdate()
+
+
+def test_update_rejects_null_title():
+    with pytest.raises(ValidationError):
+        SubtaskUpdate(title=None)
+
+
+def test_update_rejects_null_is_complete():
+    with pytest.raises(ValidationError):
+        SubtaskUpdate(is_complete=None)
+
+
 # --- extra / client-owned fields rejected ---
 
 

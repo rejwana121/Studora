@@ -6,7 +6,9 @@ from sqlmodel import Session, select
 
 from app.core.errors import ApiError
 from app.models.subject import Subject
+from app.models.subtask import Subtask
 from app.models.task import Task
+from app.schemas.subtask import SubtaskRead
 from app.schemas.task import TaskCreate, TaskListQuery, TaskRead, TaskSubjectSnapshot, TaskUpdate
 
 _PRIORITY_RANK = case(
@@ -158,7 +160,9 @@ def build_subject_snapshot_map(
     return {s.id: s for s in subjects}
 
 
-def serialize_task(task: Task, subject: Subject | None) -> TaskRead:
+def serialize_task(
+    task: Task, subject: Subject | None, subtasks: list[Subtask] | None = None
+) -> TaskRead:
     snapshot = None
     if subject is not None:
         snapshot = TaskSubjectSnapshot(
@@ -182,4 +186,5 @@ def serialize_task(task: Task, subject: Subject | None) -> TaskRead:
         reschedule_count=task.reschedule_count,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        subtasks=[SubtaskRead.model_validate(s, from_attributes=True) for s in (subtasks or [])],
     )
