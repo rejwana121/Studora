@@ -3,12 +3,38 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from app.schemas.task import TaskPriority, TaskStatus, TaskSubjectSnapshot, TaskType
+
+
+class StudyBlockTaskSnapshot(BaseModel):
+    """Nested read-only linked-task snapshot embedded in StudyBlockRead
+    (Checkpoint 4 design review, approved) — populated via the planner
+    service's bounded task/subject lookup, not a per-block query. Lets a
+    study block keep showing its linked task's details (including the
+    task's own subject snapshot, archived or not) without a
+    GET /tasks/{id} round trip. `user_id` is intentionally never exposed."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    type: TaskType
+    deadline: datetime
+    priority: TaskPriority
+    status: TaskStatus
+    subject: TaskSubjectSnapshot | None = None
+
 
 class StudyBlockRead(BaseModel):
+    """`task` is populated by every endpoint that returns a StudyBlock
+    (Checkpoint 4's planner/study-block routes) via a batched lookup —
+    never left default except when a block has no `task_id` at all."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     task_id: uuid.UUID | None
+    task: StudyBlockTaskSnapshot | None = None
     starts_at: datetime
     ends_at: datetime
     created_at: datetime
