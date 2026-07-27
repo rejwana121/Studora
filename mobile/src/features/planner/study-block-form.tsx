@@ -14,7 +14,7 @@ import {
   type as typeTokens,
 } from '@/design-system/tokens';
 
-import { TaskPickerModal, type PickerTaskSummary } from './task-picker';
+import { TaskPickerModal, type PickerTaskSummary } from '@/features/tasks/task-picker';
 
 export interface StudyBlockFormValues {
   task_id: string | null;

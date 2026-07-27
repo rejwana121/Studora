@@ -1,6 +1,6 @@
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { getProfile, updateProfile } from '@/api/profile';
 import { Banner } from '@/components/banner';
@@ -10,7 +10,7 @@ import { ThemedText } from '@/components/themed-text';
 import { signOut } from '@/features/auth/auth-service';
 import { useSession } from '@/features/auth/session-context';
 import type { Profile } from '@/types/api';
-import { color, radius, space, type as typeTokens } from '@/design-system/tokens';
+import { color, radius, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
 
 export default function ProfileScreen() {
   const { session } = useSession();
@@ -91,6 +91,20 @@ export default function ProfileScreen() {
             <View style={styles.infoDivider} />
             <InfoRow label="Timezone" value={profile.timezone} />
           </View>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Manage Subjects"
+            onPress={() => router.push('/profile/subjects' as Href)}
+            style={({ pressed }) => [styles.manageRow, pressed && styles.manageRowPressed]}
+          >
+            <ThemedText type="default" style={styles.manageRowLabel}>
+              Manage Subjects
+            </ThemedText>
+            <ThemedText type="default" style={styles.manageRowChevron}>
+              ›
+            </ThemedText>
+          </Pressable>
 
           <View style={styles.signOutSection}>
             <Button label="Sign Out" variant="secondary" onPress={handleSignOut} loading={isSigningOut} />
@@ -174,6 +188,28 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: color.border.divider,
     marginVertical: space.sm,
+  },
+  manageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: touchTarget.min,
+    backgroundColor: color.background.card,
+    borderRadius: radius.card,
+    paddingHorizontal: space.md,
+    marginTop: space.md,
+  },
+  manageRowPressed: {
+    opacity: 0.7,
+  },
+  manageRowLabel: {
+    fontSize: typeTokens.body.fontSize,
+    fontWeight: '600',
+    color: color.text.primary,
+  },
+  manageRowChevron: {
+    fontSize: typeTokens.heading.fontSize,
+    color: color.text.secondary,
   },
   signOutSection: {
     marginTop: space.xl,

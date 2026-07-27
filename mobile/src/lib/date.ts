@@ -100,3 +100,18 @@ export function monthLabel(year: number, month1to12: number): string {
     timeZone: 'UTC',
   });
 }
+
+/** Formats a UTC instant as a calendar-meaningful date+time in an
+ * explicit IANA timezone — used for history timestamps (Focus session
+ * history), which are calendar displays, not device-default formatting
+ * and never ISO-sliced. */
+export function formatZonedDateTime(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(instant);
+}

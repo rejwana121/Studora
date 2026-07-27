@@ -1,6 +1,7 @@
+import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect, type Href } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 
 import { listSubjects, updateSubject } from '@/api/subjects';
 import { Banner } from '@/components/banner';
@@ -10,8 +11,27 @@ import { Screen } from '@/components/screen';
 import { SubjectRow } from '@/components/subject-row';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
-import { color, space, type as typeTokens } from '@/design-system/tokens';
+import { color, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
 import type { Subject } from '@/types/api';
+
+function BackRow() {
+  return (
+    <View style={styles.topBar}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+        hitSlop={space.xs}
+        onPress={() => router.back()}
+        style={({ pressed }) => [styles.backControl, pressed && styles.backControlPressed]}
+      >
+        <Ionicons name="chevron-back" size={22} color={color.primary.violet} />
+        <ThemedText type="default" style={styles.backLabel}>
+          Back
+        </ThemedText>
+      </Pressable>
+    </View>
+  );
+}
 
 export default function SubjectsScreen() {
   const { session } = useSession();
@@ -63,6 +83,7 @@ export default function SubjectsScreen() {
 
   return (
     <Screen style={styles.screen}>
+      <BackRow />
       <ThemedText type="default" style={styles.title}>
         Subjects
       </ThemedText>
@@ -115,6 +136,27 @@ export default function SubjectsScreen() {
 const styles = StyleSheet.create({
   screen: {
     position: 'relative',
+  },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+  },
+  backControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    minHeight: touchTarget.min,
+    minWidth: touchTarget.min,
+    paddingHorizontal: space.sm,
+    marginLeft: -space.sm,
+  },
+  backControlPressed: {
+    opacity: 0.6,
+  },
+  backLabel: {
+    color: color.primary.violet,
+    fontSize: typeTokens.body.fontSize,
+    fontWeight: '600',
   },
   title: {
     fontSize: typeTokens.display.fontSize,

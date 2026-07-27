@@ -36,8 +36,8 @@ export default function TabsLayout() {
         options={{ title: 'Planner', tabBarIcon: tabIcon('calendar', 'calendar-outline') }}
       />
       <Tabs.Screen
-        name="subjects"
-        options={{ title: 'Subjects', tabBarIcon: tabIcon('book', 'book-outline') }}
+        name="focus"
+        options={{ title: 'Focus', tabBarIcon: tabIcon('timer', 'timer-outline') }}
       />
       <Tabs.Screen
         name="profile"

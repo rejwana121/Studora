@@ -233,3 +233,69 @@ export interface StudyBlockUpdate {
   starts_at?: string;
   ends_at?: string;
 }
+
+/** Mirrors app/schemas/study_session.py. "Cancelled" is schema-reserved
+ * but unreachable through any currently documented endpoint. */
+export type StudySessionStatus = 'Active' | 'Paused' | 'Finished' | 'Cancelled';
+
+export interface StudySessionTaskSnapshot {
+  id: string;
+  title: string;
+  type: TaskType;
+  deadline: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  subject: TaskSubjectSnapshot | null;
+}
+
+/** `active_duration_seconds` is the server-computed *effective* value at
+ * response time (includes elapsed time since the open segment if
+ * Active) — never a raw stored column to re-derive client-side.
+ * `break_eligible` is server-derived; never computed client-side. */
+export interface StudySessionRead {
+  id: string;
+  task_id: string | null;
+  task: StudySessionTaskSnapshot | null;
+  started_at: string;
+  ended_at: string | null;
+  active_duration_seconds: number;
+  status: StudySessionStatus;
+  break_taken: boolean;
+  break_eligible: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StudySessionCreate {
+  task_id?: string | null;
+}
+
+/** GET /sessions query params — single `status` value only, no IN-list. */
+export interface StudySessionListQuery {
+  status?: StudySessionStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export type BreakAction = 'TakeBreak' | 'Snooze' | 'Dismiss';
+
+export interface StudySessionBreakRead {
+  id: string;
+  session_id: string;
+  prompted_at: string;
+  action: BreakAction;
+  duration_minutes: number | null;
+}
+
+/** POST /sessions/{id}/break. `duration_minutes` must be omitted for
+ * Dismiss (server rejects an explicit value with 422). For TakeBreak it
+ * is a recorded label only — the server never auto-resumes after it. */
+export interface StudySessionBreakCreate {
+  action: BreakAction;
+  duration_minutes?: number;
+}
+
+export interface SessionBreakActionResult {
+  session: StudySessionRead;
+  break_event: StudySessionBreakRead;
+}

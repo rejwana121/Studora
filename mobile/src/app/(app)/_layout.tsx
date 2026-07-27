@@ -17,6 +17,7 @@ export default function AppLayout() {
       <Stack.Screen name="subjects/[id]/edit" options={{ presentation: 'modal' }} />
       <Stack.Screen name="planner/blocks/new" options={{ presentation: 'modal' }} />
       <Stack.Screen name="planner/blocks/[id]/edit" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="profile/subjects/index" />
     </Stack>
   );
 }
