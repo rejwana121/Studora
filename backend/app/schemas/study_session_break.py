@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from app.schemas.study_session import StudySessionRead
+
 BreakAction = Literal["TakeBreak", "Snooze", "Dismiss"]
 
 
@@ -51,3 +53,17 @@ class StudySessionBreakCreate(BaseModel):
             if self.duration_minutes < 1:
                 raise ValueError("duration_minutes must be >= 1")
         return self
+
+
+class SessionBreakActionResult(BaseModel):
+    """POST /sessions/{id}/break response body (Checkpoint 6 design
+    review, approved) — a composite of the parent session's up-to-date
+    state and the break event just recorded. `session` reflects any
+    TakeBreak-driven accrual/status change; for Snooze/Dismiss it reflects
+    the unchanged session (still Active) with a freshly computed
+    `break_eligible` that accounts for the new suppression window."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    session: StudySessionRead
+    break_event: StudySessionBreakRead

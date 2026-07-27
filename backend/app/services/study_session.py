@@ -1,11 +1,12 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 
 from app.core.errors import ApiError
 from app.models.study_session import StudySession
+from app.models.study_session_break import StudySessionBreak
 from app.models.subject import Subject
 from app.models.task import Task
 from app.schemas.study_session import (
@@ -14,9 +15,14 @@ from app.schemas.study_session import (
     StudySessionRead,
     StudySessionTaskSnapshot,
 )
+from app.schemas.study_session_break import StudySessionBreakCreate, StudySessionBreakRead
 from app.schemas.task import TaskSubjectSnapshot
 
 _UNFINISHED_STATUSES = ("Active", "Paused")
+
+# Checkpoint 6 design review, approved.
+BREAK_THRESHOLD_SECONDS = 3000
+DEFAULT_SNOOZE_MINUTES = 10
 
 
 def _as_utc_instant(value: datetime) -> datetime:
@@ -64,6 +70,62 @@ def _has_unfinished_session(session: Session, user_id: uuid.UUID) -> bool:
 
 def _duplicate_session_error() -> ApiError:
     return ApiError(409, "CONFLICT", "an unfinished study session already exists")
+
+
+def _accrue_and_close_segment(row: StudySession, now: datetime) -> None:
+    """Shared by pause_session/finish_session/record_break_action's
+    TakeBreak branch — closes the currently-open Active segment, adding
+    its elapsed time to the stored accumulator and clearing the anchor.
+    Never called for a row that isn't Active (the anchor would be None)."""
+    elapsed = _elapsed_seconds(_as_utc_instant(row.active_segment_started_at), now)
+    row.active_duration_seconds += elapsed
+    row.active_segment_started_at = None
+
+
+def _latest_break_event(session: Session, session_id: uuid.UUID) -> StudySessionBreak | None:
+    """Ordered `(prompted_at DESC, id DESC)` (Checkpoint 6 design review,
+    approved) for deterministic tie-breaking when two events share a
+    `prompted_at` value — id is a UUID4, not a monotonic sequence, but it
+    is at least stable and total, which is all determinism requires here."""
+    statement = (
+        select(StudySessionBreak)
+        .where(StudySessionBreak.session_id == session_id)
+        .order_by(StudySessionBreak.prompted_at.desc(), StudySessionBreak.id.desc())
+        .limit(1)
+    )
+    return session.exec(statement).first()
+
+
+def _compute_break_eligible(
+    row: StudySession,
+    effective_duration: int,
+    latest_break: StudySessionBreak | None,
+    as_of: datetime,
+) -> bool:
+    """Checkpoint 6 design review, approved. `row` must already be known
+    Active by the caller — this function does not check `row.status`.
+    Baseline-relative threshold first (never manufactured by
+    suppression), then a Snooze/Dismiss suppression window applied only
+    to narrow an already-true result to False. A `latest_break` whose
+    action is TakeBreak never suppresses anything here (its effect is
+    already captured via the stored baseline)."""
+    baseline = row.active_duration_seconds_at_last_break or 0
+    since_last_break = effective_duration - baseline
+    if since_last_break < BREAK_THRESHOLD_SECONDS:
+        return False
+
+    if latest_break is not None and latest_break.action in ("Snooze", "Dismiss"):
+        minutes = (
+            latest_break.duration_minutes
+            if latest_break.duration_minutes is not None
+            else DEFAULT_SNOOZE_MINUTES
+        )
+        prompted_at = _as_utc_instant(latest_break.prompted_at)
+        suppress_until = prompted_at + timedelta(minutes=minutes)
+        if prompted_at <= as_of < suppress_until:
+            return False
+
+    return True
 
 
 def start_session(session: Session, user_id: uuid.UUID, data: StudySessionCreate) -> StudySession:
@@ -129,9 +191,7 @@ def pause_session(
     if row.status != "Active":
         raise ApiError(409, "CONFLICT", f"session is {row.status.lower()}, cannot pause")
 
-    elapsed = _elapsed_seconds(_as_utc_instant(row.active_segment_started_at), now)
-    row.active_duration_seconds += elapsed
-    row.active_segment_started_at = None
+    _accrue_and_close_segment(row, now)
     row.status = "Paused"
     row.updated_at = now
     session.add(row)
@@ -180,9 +240,7 @@ def finish_session(
         raise ApiError(409, "CONFLICT", f"session is {row.status.lower()}, cannot finish")
 
     if row.status == "Active":
-        elapsed = _elapsed_seconds(_as_utc_instant(row.active_segment_started_at), now)
-        row.active_duration_seconds += elapsed
-        row.active_segment_started_at = None
+        _accrue_and_close_segment(row, now)
 
     row.status = "Finished"
     row.ended_at = now
@@ -191,6 +249,77 @@ def finish_session(
     session.commit()
     session.refresh(row)
     return row
+
+
+def record_break_action(
+    session: Session,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    data: StudySessionBreakCreate,
+    now: datetime | None = None,
+) -> tuple[StudySession, StudySessionBreak]:
+    """POST /sessions/{id}/break (Checkpoint 6 design review, approved).
+    Only valid while the session is Active — 409 otherwise, same pattern
+    as the other action endpoints.
+
+    TakeBreak closes the open segment (same accrual as pause_session),
+    moves the session to Paused, sets `break_taken`, and snapshots
+    `active_duration_seconds_at_last_break` to the just-accrued
+    `active_duration_seconds` — the new baseline the next eligibility
+    cycle counts from. Snooze/Dismiss leave the session untouched
+    (still Active); their only effect is the inserted event row, whose
+    `prompted_at`/`duration_minutes` the suppression-aware eligibility
+    calculation (`_compute_break_eligible`) reads back afterward.
+
+    The parent-row mutation and the new event insert commit in the same
+    transaction. Any commit failure is rolled back and re-raised —
+    neither the row nor the event may partially persist.
+    """
+    now = now if now is not None else datetime.now(UTC)
+    row = get_owned_study_session(session, user_id, session_id, for_update=True)
+    if row.status != "Active":
+        raise ApiError(
+            409, "CONFLICT", f"session is {row.status.lower()}, cannot record a break action"
+        )
+
+    break_event = StudySessionBreak(
+        session_id=row.id,
+        user_id=user_id,
+        prompted_at=now,
+        action=data.action,
+        duration_minutes=data.duration_minutes,
+    )
+
+    if data.action == "TakeBreak":
+        _accrue_and_close_segment(row, now)
+        row.status = "Paused"
+        row.break_taken = True
+        row.active_duration_seconds_at_last_break = row.active_duration_seconds
+        row.updated_at = now
+
+    session.add(row)
+    session.add(break_event)
+    try:
+        session.commit()
+    except SQLAlchemyError:
+        session.rollback()
+        raise
+    session.refresh(row)
+    session.refresh(break_event)
+    return row, break_event
+
+
+def serialize_break_event(break_row: StudySessionBreak) -> StudySessionBreakRead:
+    """Canonicalizes `prompted_at` to timezone-aware UTC before it ever
+    reaches a response schema — same requirement as every other
+    response datetime in this module (see `_as_utc_instant`)."""
+    return StudySessionBreakRead(
+        id=break_row.id,
+        session_id=break_row.session_id,
+        prompted_at=_as_utc_instant(break_row.prompted_at),
+        action=break_row.action,
+        duration_minutes=break_row.duration_minutes,
+    )
 
 
 def list_sessions(
@@ -212,6 +341,7 @@ def serialize_study_session(
     task: Task | None,
     subject: Subject | None,
     as_of: datetime | None = None,
+    latest_break: StudySessionBreak | None = None,
 ) -> StudySessionRead:
     """Every datetime placed into the response passes through
     `_as_utc_instant` first (same response-correctness requirement as
@@ -219,12 +349,26 @@ def serialize_study_session(
     without a UTC offset). For an Active session, `active_duration_seconds`
     reports the *effective* value as of `as_of` (defaults to real now) by
     adding elapsed time since the open segment's anchor — computed only
-    for the response, never written back to `session_row`."""
+    for the response, never written back to `session_row`.
+
+    `break_eligible` (Checkpoint 6 design review, approved) is computed
+    here only when `session_row.status == "Active"`; every other status
+    reports `False` regardless of `latest_break`. `latest_break` defaults
+    to `None` so this function's existing signature stays usable from
+    tests/callers that don't care about eligibility — callers that do
+    (every route that can return an Active session) must fetch it first,
+    which `serialize_study_session_for_response` below does."""
     as_of = as_of if as_of is not None else datetime.now(UTC)
     effective_duration = session_row.active_duration_seconds
     if session_row.status == "Active":
         anchor = _as_utc_instant(session_row.active_segment_started_at)
         effective_duration += _elapsed_seconds(anchor, as_of)
+
+    break_eligible = False
+    if session_row.status == "Active":
+        break_eligible = _compute_break_eligible(
+            session_row, effective_duration, latest_break, as_of
+        )
 
     task_snapshot = None
     if task is not None:
@@ -256,6 +400,32 @@ def serialize_study_session(
         active_duration_seconds=effective_duration,
         status=session_row.status,
         break_taken=session_row.break_taken,
+        break_eligible=break_eligible,
         created_at=_as_utc_instant(session_row.created_at),
         updated_at=_as_utc_instant(session_row.updated_at),
+    )
+
+
+def serialize_study_session_for_response(
+    session: Session,
+    session_row: StudySession,
+    task: Task | None,
+    subject: Subject | None,
+    as_of: datetime | None = None,
+) -> StudySessionRead:
+    """Shared bounded serialization helper (Checkpoint 6 design review,
+    approved) — every route that can return an Active session (GET
+    /sessions, POST /sessions/start, PATCH /sessions/{id}/resume, POST
+    /sessions/{id}/break) must call this instead of `serialize_study_session`
+    directly, or a suppression window from a just-recorded Snooze/Dismiss
+    would be silently ignored. The extra `_latest_break_event` query only
+    runs when `session_row.status == "Active"`; the partial unique
+    unfinished-session index guarantees at most one such row per user, so
+    this never becomes an N+1 query across a list response."""
+    as_of = as_of if as_of is not None else datetime.now(UTC)
+    latest_break = (
+        _latest_break_event(session, session_row.id) if session_row.status == "Active" else None
+    )
+    return serialize_study_session(
+        session_row, task, subject, as_of=as_of, latest_break=latest_break
     )

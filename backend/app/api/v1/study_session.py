@@ -13,13 +13,16 @@ from app.schemas.study_session import (
     StudySessionListQuery,
     StudySessionRead,
 )
+from app.schemas.study_session_break import SessionBreakActionResult, StudySessionBreakCreate
 from app.services.study_block import build_task_snapshot_map
 from app.services.study_session import (
     finish_session,
     list_sessions,
     pause_session,
+    record_break_action,
     resume_session,
-    serialize_study_session,
+    serialize_break_event,
+    serialize_study_session_for_response,
     start_session,
 )
 from app.services.task import build_subject_snapshot_map
@@ -34,7 +37,7 @@ def _serialize_with_snapshot(
     task = task_map.get(session_row.task_id) if session_row.task_id is not None else None
     subject_map = build_subject_snapshot_map(session, user_id, [task] if task is not None else [])
     subject = subject_map.get(task.subject_id) if task is not None and task.subject_id else None
-    return serialize_study_session(session_row, task, subject)
+    return serialize_study_session_for_response(session, session_row, task, subject)
 
 
 @router.post("/start", response_model=StudySessionRead, status_code=201)
@@ -81,6 +84,19 @@ def finish_session_route(
     return _serialize_with_snapshot(session, current_user.id, session_row)
 
 
+@router.post("/{session_id}/break", response_model=SessionBreakActionResult, status_code=201)
+def record_break_action_route(
+    session_id: uuid.UUID,
+    data: StudySessionBreakCreate,
+    current_user: CurrentUser = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> SessionBreakActionResult:
+    session_row, break_row = record_break_action(session, current_user.id, session_id, data)
+    session_read = _serialize_with_snapshot(session, current_user.id, session_row)
+    break_read = serialize_break_event(break_row)
+    return SessionBreakActionResult(session=session_read, break_event=break_read)
+
+
 @router.get("", response_model=list[StudySessionRead])
 def read_sessions(
     query: Annotated[StudySessionListQuery, Query()],
@@ -96,4 +112,6 @@ def read_sessions(
         subject = subject_map.get(task.subject_id) if task is not None and task.subject_id else None
         return task, subject
 
-    return [serialize_study_session(r, *_task_and_subject(r)) for r in rows]
+    return [
+        serialize_study_session_for_response(session, r, *_task_and_subject(r)) for r in rows
+    ]

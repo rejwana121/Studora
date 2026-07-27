@@ -66,6 +66,23 @@ class StudySession(SQLModel, table=True):
     ongoing (Active/Paused) and non-null iff terminal (Finished/
     Cancelled); `active_segment_started_at` null iff not Active; and
     `ended_at` never earlier than `started_at`.
+
+    `active_duration_seconds_at_last_break` is an internal-only snapshot
+    (Checkpoint 6 design review, approved) — never exposed on any client
+    schema, same treatment as `active_segment_started_at`. It holds the
+    stored `active_duration_seconds` value immediately after the most
+    recent successful TakeBreak's accrual, so the service layer can
+    compute "active time since the last break" for repeated break-prompt
+    eligibility instead of only ever prompting once per session. Three
+    further CHECK constraints guard it: non-negative when present; never
+    exceeding the current `active_duration_seconds` (true by construction
+    at the moment it is set, and preserved afterward because
+    `active_duration_seconds` only ever increases); and an iff against
+    `break_taken` — null exactly when `break_taken` is false, non-null
+    exactly when `break_taken` is true. `start_session`/`pause_session`/
+    `resume_session`/`finish_session` never assign to either field, so
+    all three hold for every reachable row without any change to those
+    four functions.
     """
 
     __tablename__ = "study_sessions"
@@ -99,6 +116,21 @@ class StudySession(SQLModel, table=True):
             "ended_at IS NULL OR ended_at >= started_at",
             name="ck_study_sessions_ended_not_before_started",
         ),
+        CheckConstraint(
+            "active_duration_seconds_at_last_break IS NULL "
+            "OR active_duration_seconds_at_last_break >= 0",
+            name="ck_study_sessions_break_baseline_non_negative",
+        ),
+        CheckConstraint(
+            "active_duration_seconds_at_last_break IS NULL "
+            "OR active_duration_seconds_at_last_break <= active_duration_seconds",
+            name="ck_study_sessions_break_baseline_not_exceeding_duration",
+        ),
+        CheckConstraint(
+            "(break_taken AND active_duration_seconds_at_last_break IS NOT NULL) "
+            "OR (NOT break_taken AND active_duration_seconds_at_last_break IS NULL)",
+            name="ck_study_sessions_break_baseline_matches_break_taken",
+        ),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -127,6 +159,10 @@ class StudySession(SQLModel, table=True):
     active_segment_started_at: datetime | None = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    active_duration_seconds_at_last_break: int | None = Field(
+        default=None,
+        sa_column=Column(Integer(), nullable=True),
     )
     created_at: datetime = Field(
         default_factory=_utcnow,

@@ -43,6 +43,20 @@ class StudySessionRead(BaseModel):
     computed value, not the raw anchor timestamp, is what a live-session
     read response reports. `task` is populated via a bounded bulk lookup,
     never left default when `task_id` is set.
+
+    `break_eligible` (Checkpoint 6 design review, approved) is a flat,
+    server-derived boolean — true when the session is Active, has
+    accrued >= 3000 effective active seconds since its last break (or
+    since session start, if no break has been taken yet), and is not
+    currently within an active Snooze/Dismiss suppression window. It
+    defaults to `False` here only so `model_validate(row, from_attributes=
+    True)` doesn't fail against a bare ORM row in schema-level tests that
+    don't care about eligibility — every real API response computes and
+    passes the real value explicitly via
+    `app.services.study_session.serialize_study_session`; no route may
+    rely on this default. `active_duration_seconds_at_last_break`, the
+    internal baseline this is computed from, is intentionally never a
+    field on this schema.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -55,6 +69,7 @@ class StudySessionRead(BaseModel):
     active_duration_seconds: int
     status: StudySessionStatus
     break_taken: bool
+    break_eligible: bool = False
     created_at: datetime
     updated_at: datetime
 

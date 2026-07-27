@@ -165,6 +165,7 @@ def _base_row(**overrides) -> dict:
         "status": "Active",
         "break_taken": False,
         "active_segment_started_at": AWARE_START,
+        "active_duration_seconds_at_last_break": None,
         "created_at": AWARE_START,
         "updated_at": AWARE_START,
     }
@@ -210,6 +211,7 @@ def test_study_sessions_table_has_expected_columns():
             "status",
             "break_taken",
             "active_segment_started_at",
+            "active_duration_seconds_at_last_break",
             "created_at",
             "updated_at",
         }
@@ -312,6 +314,52 @@ def test_break_taken_server_default_is_false_when_omitted():
                 )
             ).one()
         assert row.break_taken is False
+    finally:
+        engine.dispose()
+
+
+# --- break baseline column (Checkpoint 6) ---
+
+
+def test_break_baseline_column_is_nullable():
+    engine = _make_engine()
+    try:
+        insp = inspect(engine)
+        columns = {col["name"]: col for col in insp.get_columns("study_sessions")}
+        assert columns["active_duration_seconds_at_last_break"]["nullable"] is True
+    finally:
+        engine.dispose()
+
+
+def test_break_baseline_defaults_to_none_when_omitted():
+    engine = _make_engine()
+    try:
+        user_id = uuid.uuid4()
+        session_id = uuid.uuid4()
+        with engine.begin() as conn:
+            conn.execute(
+                sa.insert(StudySession.__table__).values(
+                    id=session_id,
+                    user_id=user_id,
+                    task_id=None,
+                    started_at=AWARE_START,
+                    ended_at=None,
+                    active_duration_seconds=0,
+                    status="Active",
+                    break_taken=False,
+                    active_segment_started_at=AWARE_START,
+                    # active_duration_seconds_at_last_break intentionally omitted
+                    created_at=AWARE_START,
+                    updated_at=AWARE_START,
+                )
+            )
+        with engine.connect() as conn:
+            row = conn.execute(
+                sa.select(StudySession.__table__.c.active_duration_seconds_at_last_break).where(
+                    StudySession.__table__.c.id == session_id
+                )
+            ).one()
+        assert row.active_duration_seconds_at_last_break is None
     finally:
         engine.dispose()
 
@@ -438,6 +486,148 @@ def test_check_rejects_ended_at_before_started_at():
                         "Finished", ended_at=AWARE_START - timedelta(hours=1)
                     ),
                 )
+    finally:
+        engine.dispose()
+
+
+# --- CHECK constraints: break baseline (Checkpoint 6) ---
+
+
+def _valid_break_taken_row(**overrides) -> dict:
+    """An Active row with a break already taken — baseline present and
+    consistent with `break_taken=True`, satisfying every CHECK
+    constraint by default so individual tests can mutate exactly one
+    field away from valid."""
+    defaults = {
+        "break_taken": True,
+        "active_duration_seconds": 3200,
+        "active_duration_seconds_at_last_break": 3200,
+    }
+    return _valid_row_for_status("Active", **{**defaults, **overrides})
+
+
+def test_check_allows_break_baseline_equal_to_duration():
+    engine = _make_engine()
+    try:
+        with engine.begin() as conn:
+            _insert(conn, _valid_break_taken_row())
+    finally:
+        engine.dispose()
+
+
+def test_check_allows_break_baseline_less_than_duration():
+    engine = _make_engine()
+    try:
+        with engine.begin() as conn:
+            _insert(
+                conn,
+                _valid_break_taken_row(
+                    active_duration_seconds=4000, active_duration_seconds_at_last_break=3200
+                ),
+            )
+    finally:
+        engine.dispose()
+
+
+def test_check_rejects_negative_break_baseline():
+    engine = _make_engine()
+    try:
+        with pytest.raises(sa.exc.IntegrityError):
+            with engine.begin() as conn:
+                _insert(conn, _valid_break_taken_row(active_duration_seconds_at_last_break=-1))
+    finally:
+        engine.dispose()
+
+
+def test_check_rejects_break_baseline_exceeding_duration():
+    engine = _make_engine()
+    try:
+        with pytest.raises(sa.exc.IntegrityError):
+            with engine.begin() as conn:
+                _insert(
+                    conn,
+                    _valid_break_taken_row(
+                        active_duration_seconds=100, active_duration_seconds_at_last_break=101
+                    ),
+                )
+    finally:
+        engine.dispose()
+
+
+def test_check_rejects_break_taken_true_with_null_baseline():
+    engine = _make_engine()
+    try:
+        with pytest.raises(sa.exc.IntegrityError):
+            with engine.begin() as conn:
+                _insert(
+                    conn,
+                    _valid_break_taken_row(active_duration_seconds_at_last_break=None),
+                )
+    finally:
+        engine.dispose()
+
+
+def test_check_rejects_break_taken_false_with_non_null_baseline():
+    engine = _make_engine()
+    try:
+        with pytest.raises(sa.exc.IntegrityError):
+            with engine.begin() as conn:
+                _insert(
+                    conn,
+                    _valid_row_for_status(
+                        "Active",
+                        break_taken=False,
+                        active_duration_seconds=3200,
+                        active_duration_seconds_at_last_break=3200,
+                    ),
+                )
+    finally:
+        engine.dispose()
+
+
+def test_check_allows_break_taken_false_with_null_baseline():
+    engine = _make_engine()
+    try:
+        with engine.begin() as conn:
+            _insert(conn, _valid_row_for_status("Active"))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("status", ["Paused", "Finished", "Cancelled"])
+def test_check_allows_break_taken_row_for_every_non_active_status(status):
+    engine = _make_engine()
+    try:
+        with engine.begin() as conn:
+            row = _valid_row_for_status(
+                status,
+                break_taken=True,
+                active_duration_seconds=3200,
+                active_duration_seconds_at_last_break=3200,
+            )
+            _insert(conn, row)
+    finally:
+        engine.dispose()
+
+
+# --- CHECK constraint preservation: prior constraints still present ---
+
+
+def test_check_constraint_names_include_prior_and_new_constraints():
+    engine = _make_engine()
+    try:
+        insp = inspect(engine)
+        names = {c["name"] for c in insp.get_check_constraints("study_sessions")}
+        assert names == {
+            "ck_study_sessions_duration_non_negative",
+            "ck_study_sessions_status_enum",
+            "ck_study_sessions_ended_at_matches_status",
+            "ck_study_sessions_segment_anchor_matches_status",
+            "ck_study_sessions_ended_not_before_started",
+            "ck_study_sessions_break_baseline_non_negative",
+            "ck_study_sessions_break_baseline_not_exceeding_duration",
+            "ck_study_sessions_break_baseline_matches_break_taken",
+        }
     finally:
         engine.dispose()
 

@@ -23,7 +23,12 @@ from sqlmodel import SQLModel
 
 from app.models.study_session import StudySession
 from app.models.study_session_break import StudySessionBreak
-from app.schemas.study_session_break import StudySessionBreakCreate, StudySessionBreakRead
+from app.schemas.study_session import StudySessionRead
+from app.schemas.study_session_break import (
+    SessionBreakActionResult,
+    StudySessionBreakCreate,
+    StudySessionBreakRead,
+)
 
 AWARE_START = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
 
@@ -145,6 +150,40 @@ def test_read_builds_from_orm_attributes():
 
 def test_read_has_no_user_id_field():
     assert "user_id" not in StudySessionBreakRead.model_fields
+
+
+# --- SessionBreakActionResult (Checkpoint 6) ---
+
+
+def _session_read(**overrides):
+    values = {
+        "id": uuid.uuid4(),
+        "task_id": None,
+        "started_at": AWARE_START,
+        "ended_at": None,
+        "active_duration_seconds": 0,
+        "status": "Active",
+        "break_taken": False,
+        "created_at": AWARE_START,
+        "updated_at": AWARE_START,
+    }
+    values.update(overrides)
+    return StudySessionRead(**values)
+
+
+def test_action_result_builds_from_nested_schema_instances():
+    session_read = _session_read()
+    break_read = StudySessionBreakRead.model_validate(_StudySessionBreakRow())
+    result = SessionBreakActionResult(session=session_read, break_event=break_read)
+    assert result.session.id == session_read.id
+    assert result.break_event.id == break_read.id
+
+
+def test_action_result_session_carries_break_eligible():
+    session_read = _session_read(break_eligible=True)
+    break_read = StudySessionBreakRead.model_validate(_StudySessionBreakRow())
+    result = SessionBreakActionResult(session=session_read, break_event=break_read)
+    assert result.session.break_eligible is True
 
 
 # =====================================================================
