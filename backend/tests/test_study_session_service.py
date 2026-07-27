@@ -25,6 +25,7 @@ from app.schemas.study_session import StudySessionCreate, StudySessionListQuery
 from app.services import study_session as study_session_service
 from app.services.study_block import build_task_snapshot_map
 from app.services.study_session import (
+    BREAK_THRESHOLD_SECONDS,
     _as_utc_instant,
     _elapsed_seconds,
     finish_session,
@@ -467,6 +468,44 @@ def test_serialize_returns_timezone_aware_datetimes(engine):
         assert read.updated_at.tzinfo is not None
         assert read.ended_at is not None
         assert read.ended_at.tzinfo is not None
+        assert read.next_break_eligible_at is None
+
+
+def test_serialize_paused_session_next_break_eligible_at_is_none(engine):
+    with Session(engine) as session:
+        row = StudySession(
+            user_id=uuid.uuid4(),
+            started_at=NOW,
+            status="Paused",
+            active_segment_started_at=None,
+            active_duration_seconds=BREAK_THRESHOLD_SECONDS + 500,
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+
+        read = serialize_study_session(row, None, None, as_of=NOW)
+        assert read.next_break_eligible_at is None
+
+
+def test_serialize_cancelled_session_next_break_eligible_at_is_none(engine):
+    # Cancelled is schema-reserved and unreachable through any documented
+    # endpoint, but is directly constructible at the ORM/serializer level
+    # for this defensive check.
+    with Session(engine) as session:
+        row = StudySession(
+            user_id=uuid.uuid4(),
+            started_at=NOW,
+            status="Cancelled",
+            ended_at=NOW,
+            active_segment_started_at=None,
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+
+        read = serialize_study_session(row, None, None, as_of=NOW)
+        assert read.next_break_eligible_at is None
 
 
 def test_serialize_task_snapshot_deadline_is_timezone_aware(engine):

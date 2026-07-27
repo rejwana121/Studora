@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from .conftest import auth_headers, make_token
 
@@ -132,6 +132,62 @@ def test_start_response_datetimes_are_timezone_aware(client):
     assert datetime.fromisoformat(body["started_at"]).tzinfo is not None
     assert datetime.fromisoformat(body["created_at"]).tzinfo is not None
     assert datetime.fromisoformat(body["updated_at"]).tzinfo is not None
+
+
+# --- next_break_eligible_at (Checkpoint 9A) ---
+# Real HTTP routes use wall-clock `datetime.now(UTC)`, not an injectable
+# fixed time, so these assert tz-awareness and reasonable non-flaky
+# bounds rather than exact instants — same established pattern as
+# test_effective_active_duration_is_non_negative_and_reasonable above.
+
+
+def test_start_response_next_break_eligible_at_is_utc_aware_and_in_future(client):
+    body = _start(client).json()
+    value = datetime.fromisoformat(body["next_break_eligible_at"])
+    assert value.tzinfo is not None
+    now = datetime.now(UTC)
+    assert now < value <= now + timedelta(seconds=3000 + 60)
+
+
+def test_resume_response_next_break_eligible_at_is_utc_aware_and_in_future(client):
+    headers = auth_headers()
+    session_id = _start(client, headers).json()["id"]
+    client.patch(_pause_url(session_id), headers=headers)
+    body = client.patch(_resume_url(session_id), headers=headers).json()
+
+    value = datetime.fromisoformat(body["next_break_eligible_at"])
+    assert value.tzinfo is not None
+    now = datetime.now(UTC)
+    assert now < value <= now + timedelta(seconds=3000 + 60)
+
+
+def test_pause_response_next_break_eligible_at_is_null(client):
+    headers = auth_headers()
+    session_id = _start(client, headers).json()["id"]
+    body = client.patch(_pause_url(session_id), headers=headers).json()
+    assert body["next_break_eligible_at"] is None
+
+
+def test_finish_response_next_break_eligible_at_is_null(client):
+    headers = auth_headers()
+    session_id = _start(client, headers).json()["id"]
+    body = client.patch(_finish_url(session_id), headers=headers).json()
+    assert body["next_break_eligible_at"] is None
+
+
+def test_list_fresh_readback_recomputes_next_break_eligible_at(client):
+    # Proves GET /sessions computes this field fresh server-side on every
+    # call — no reliance on anything a prior client response might have
+    # remembered (there is none here; this is a brand-new client call).
+    headers = auth_headers()
+    session_id = _start(client, headers).json()["id"]
+
+    response = client.get(LIST_URL, params={"status": "Active"}, headers=headers)
+    body = next(s for s in response.json() if s["id"] == session_id)
+    value = datetime.fromisoformat(body["next_break_eligible_at"])
+    assert value.tzinfo is not None
+    now = datetime.now(UTC)
+    assert now < value <= now + timedelta(seconds=3000 + 60)
 
 
 # --- action routes: body shapes ---

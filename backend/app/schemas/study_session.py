@@ -57,6 +57,17 @@ class StudySessionRead(BaseModel):
     rely on this default. `active_duration_seconds_at_last_break`, the
     internal baseline this is computed from, is intentionally never a
     field on this schema.
+
+    `next_break_eligible_at` (Checkpoint 9A, "Phase 7 Alerts —
+    pulled-forward Focus-break slice") is a server-derived, read-only
+    instant a mobile client can use to schedule a local reminder
+    notification, computed from the exact same as_of/effective_duration/
+    baseline/latest-break inputs as `break_eligible` (see
+    `app.services.study_session._compute_next_break_eligible_at`) so the
+    two can never diverge. `None` while Paused/Finished/Cancelled. Like
+    `break_eligible`, it defaults to `None` here only for bare-ORM-row
+    schema tests; every real response computes and passes it explicitly.
+    Never client-settable — absent from every write schema.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -70,6 +81,7 @@ class StudySessionRead(BaseModel):
     status: StudySessionStatus
     break_taken: bool
     break_eligible: bool = False
+    next_break_eligible_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

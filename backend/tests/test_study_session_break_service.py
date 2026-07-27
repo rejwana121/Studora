@@ -96,6 +96,12 @@ def test_eligibility_threshold_boundaries_first_cycle(engine, active_duration_se
         )
         read = serialize_study_session_for_response(session, row, None, None, as_of=NOW)
         assert read.break_eligible is expected
+        if expected:
+            # Checkpoint 9A: already eligible -> equals this response's as_of.
+            assert read.next_break_eligible_at == NOW
+        else:
+            remaining = BREAK_THRESHOLD_SECONDS - active_duration_seconds
+            assert read.next_break_eligible_at == NOW + timedelta(seconds=remaining)
 
 
 # --- eligibility: threshold boundaries relative to a non-zero baseline (repeated cycle) ---
@@ -122,6 +128,30 @@ def test_eligibility_threshold_boundaries_relative_to_baseline(engine, offset, e
         )
         read = serialize_study_session_for_response(session, row, None, None, as_of=NOW)
         assert read.break_eligible is expected
+        if expected:
+            assert read.next_break_eligible_at == NOW
+        else:
+            remaining = BREAK_THRESHOLD_SECONDS - offset
+            assert read.next_break_eligible_at == NOW + timedelta(seconds=remaining)
+
+
+def test_next_break_eligible_at_stable_across_repeated_serialization_below_threshold(engine):
+    """Checkpoint 9A stability requirement: while an Active session
+    remains below threshold and no state changes, serializing at two
+    later as_of instants must return the SAME absolute
+    next_break_eligible_at — required so mobile notification scheduling
+    does not churn on every 30s reconciliation poll."""
+    owner_id = uuid.uuid4()
+    with Session(engine) as session:
+        row = _insert_active_session(session, owner_id, active_duration_seconds=100)
+
+        first = serialize_study_session_for_response(session, row, None, None, as_of=NOW)
+        second = serialize_study_session_for_response(
+            session, row, None, None, as_of=NOW + timedelta(seconds=30)
+        )
+
+        assert first.next_break_eligible_at is not None
+        assert first.next_break_eligible_at == second.next_break_eligible_at
 
 
 def test_eligibility_false_for_paused_session_even_past_threshold(engine):
@@ -136,6 +166,7 @@ def test_eligibility_false_for_paused_session_even_past_threshold(engine):
         )
         read = serialize_study_session_for_response(session, row, None, None, as_of=NOW)
         assert read.break_eligible is False
+        assert read.next_break_eligible_at is None
 
 
 # --- record_break_action: TakeBreak ---
@@ -159,6 +190,9 @@ def test_take_break_pauses_session_and_sets_baseline(engine):
         assert break_event.action == "TakeBreak"
         assert break_event.session_id == row.id
 
+        read = serialize_study_session_for_response(session, updated, None, None, as_of=t1)
+        assert read.next_break_eligible_at is None
+
 
 def test_two_full_take_break_cycles_advance_baseline_each_time(engine):
     owner_id = uuid.uuid4()
@@ -178,6 +212,11 @@ def test_two_full_take_break_cycles_advance_baseline_each_time(engine):
         # Not yet eligible again immediately after resume.
         read = serialize_study_session_for_response(session, resumed, None, None, as_of=t2)
         assert read.break_eligible is False
+        # Checkpoint 9A: the new cycle's next_break_eligible_at uses the
+        # STORED baseline from the first TakeBreak (BREAK_THRESHOLD_SECONDS),
+        # not zero — it must count a full threshold forward from that
+        # baseline, landing BREAK_THRESHOLD_SECONDS after t2.
+        assert read.next_break_eligible_at == t2 + timedelta(seconds=BREAK_THRESHOLD_SECONDS)
 
         t3 = t2 + timedelta(seconds=BREAK_THRESHOLD_SECONDS)
         updated2, _ = record_break_action(
@@ -251,13 +290,26 @@ def test_snooze_suppresses_eligibility_for_its_duration_then_expires(engine):
             now=NOW,
         )
 
-        just_inside = NOW + timedelta(minutes=10) - timedelta(seconds=1)
+        suppress_until = NOW + timedelta(minutes=10)
+
+        just_inside = suppress_until - timedelta(seconds=1)
         read = serialize_study_session_for_response(session, row, None, None, as_of=just_inside)
         assert read.break_eligible is False
+        assert read.next_break_eligible_at == suppress_until
+
+        # Stability: two distinct, later reads still inside the
+        # suppression window must both return the identical
+        # suppression-expiry instant.
+        for later_as_of in (NOW + timedelta(minutes=2), NOW + timedelta(minutes=5)):
+            read_again = serialize_study_session_for_response(
+                session, row, None, None, as_of=later_as_of
+            )
+            assert read_again.next_break_eligible_at == suppress_until
 
         at_boundary = NOW + timedelta(minutes=10)
         read = serialize_study_session_for_response(session, row, None, None, as_of=at_boundary)
         assert read.break_eligible is True
+        assert read.next_break_eligible_at == at_boundary
 
 
 def test_dismiss_uses_default_snooze_minutes_for_suppression(engine):
@@ -270,15 +322,37 @@ def test_dismiss_uses_default_snooze_minutes_for_suppression(engine):
             session, owner_id, row.id, StudySessionBreakCreate(action="Dismiss"), now=NOW
         )
 
-        still_suppressed = NOW + timedelta(minutes=DEFAULT_SNOOZE_MINUTES) - timedelta(seconds=1)
+        expiry = NOW + timedelta(minutes=DEFAULT_SNOOZE_MINUTES)
+
+        still_suppressed = expiry - timedelta(seconds=1)
         read = serialize_study_session_for_response(
             session, row, None, None, as_of=still_suppressed
         )
         assert read.break_eligible is False
+        assert read.next_break_eligible_at == expiry
 
-        expired = NOW + timedelta(minutes=DEFAULT_SNOOZE_MINUTES)
-        read = serialize_study_session_for_response(session, row, None, None, as_of=expired)
+        read = serialize_study_session_for_response(session, row, None, None, as_of=expiry)
         assert read.break_eligible is True
+        assert read.next_break_eligible_at == expiry
+
+
+def test_snooze_custom_duration_reflected_in_next_break_eligible_at(engine):
+    owner_id = uuid.uuid4()
+    with Session(engine) as session:
+        row = _insert_active_session(
+            session, owner_id, active_duration_seconds=BREAK_THRESHOLD_SECONDS
+        )
+        record_break_action(
+            session,
+            owner_id,
+            row.id,
+            StudySessionBreakCreate(action="Snooze", duration_minutes=25),
+            now=NOW,
+        )
+        read = serialize_study_session_for_response(
+            session, row, None, None, as_of=NOW + timedelta(minutes=1)
+        )
+        assert read.next_break_eligible_at == NOW + timedelta(minutes=25)
 
 
 def test_suppression_never_manufactures_eligibility_below_threshold(engine):

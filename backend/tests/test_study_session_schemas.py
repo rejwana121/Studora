@@ -65,6 +65,7 @@ def test_create_rejects_unknown_field():
         ("active_segment_started_at", AWARE_START.isoformat()),
         ("created_at", AWARE_START.isoformat()),
         ("updated_at", AWARE_START.isoformat()),
+        ("next_break_eligible_at", AWARE_START.isoformat()),
     ],
 )
 def test_create_rejects_client_owned_fields(field, value):
@@ -101,6 +102,20 @@ def test_read_omits_active_segment_started_at():
 
 def test_read_omits_user_id():
     assert "user_id" not in StudySessionRead.model_fields
+
+
+def test_read_includes_next_break_eligible_at_field():
+    assert "next_break_eligible_at" in StudySessionRead.model_fields
+
+
+def test_read_next_break_eligible_at_defaults_to_none_for_bare_orm_row():
+    # Same convenience default as break_eligible: model_validate() against
+    # a bare row with no such attribute must not fail in schema-level
+    # tests that don't care about scheduling — every real route passes
+    # the computed value explicitly (see app.services.study_session).
+    row = _StudySessionRow()
+    read = StudySessionRead.model_validate(row)
+    assert read.next_break_eligible_at is None
 
 
 # =====================================================================

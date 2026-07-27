@@ -96,6 +96,31 @@ def _latest_break_event(session: Session, session_id: uuid.UUID) -> StudySession
     return session.exec(statement).first()
 
 
+def _active_suppression_until(
+    latest_break: StudySessionBreak | None, as_of: datetime
+) -> datetime | None:
+    """Checkpoint 9A extraction (behavior unchanged from the inline logic
+    previously duplicated only in `_compute_break_eligible`) — the
+    instant an active Snooze/Dismiss suppression window ends, or `None`
+    if no such window is currently active. Shared by
+    `_compute_break_eligible` and `_compute_next_break_eligible_at` so
+    the suppression rule (a `latest_break` whose action is TakeBreak
+    never suppresses; a null `duration_minutes` falls back to
+    `DEFAULT_SNOOZE_MINUTES`) is defined exactly once."""
+    if latest_break is None or latest_break.action not in ("Snooze", "Dismiss"):
+        return None
+    minutes = (
+        latest_break.duration_minutes
+        if latest_break.duration_minutes is not None
+        else DEFAULT_SNOOZE_MINUTES
+    )
+    prompted_at = _as_utc_instant(latest_break.prompted_at)
+    suppress_until = prompted_at + timedelta(minutes=minutes)
+    if prompted_at <= as_of < suppress_until:
+        return suppress_until
+    return None
+
+
 def _compute_break_eligible(
     row: StudySession,
     effective_duration: int,
@@ -114,18 +139,52 @@ def _compute_break_eligible(
     if since_last_break < BREAK_THRESHOLD_SECONDS:
         return False
 
-    if latest_break is not None and latest_break.action in ("Snooze", "Dismiss"):
-        minutes = (
-            latest_break.duration_minutes
-            if latest_break.duration_minutes is not None
-            else DEFAULT_SNOOZE_MINUTES
-        )
-        prompted_at = _as_utc_instant(latest_break.prompted_at)
-        suppress_until = prompted_at + timedelta(minutes=minutes)
-        if prompted_at <= as_of < suppress_until:
-            return False
+    if _active_suppression_until(latest_break, as_of) is not None:
+        return False
 
     return True
+
+
+def _compute_next_break_eligible_at(
+    row: StudySession,
+    effective_duration: int,
+    latest_break: StudySessionBreak | None,
+    as_of: datetime,
+    *,
+    break_eligible: bool,
+) -> datetime | None:
+    """Checkpoint 9A, "Phase 7 Alerts — pulled-forward Focus-break
+    slice". Server-derived instant this session will next become
+    break-eligible, for mobile local-notification scheduling. `None`
+    unless `row.status == "Active"`. Reuses the exact same
+    `effective_duration`/`baseline`/`latest_break`/`as_of` inputs
+    `_compute_break_eligible` was called with (the caller passes its
+    already-computed `break_eligible` result rather than this function
+    recomputing the threshold check itself, so the two can never
+    diverge) — no new query, no duplicated threshold logic.
+
+    If already eligible, returns `as_of` itself ("eligible now"), not a
+    stale future instant. Otherwise: the raw threshold instant
+    (`as_of` + however many seconds remain until `effective_duration`
+    reaches `baseline + BREAK_THRESHOLD_SECONDS`), pushed later to an
+    active suppression's expiry if that expiry is later still —
+    suppression can only push this instant later, never earlier, the
+    same "narrows an already-true result" relationship
+    `_compute_break_eligible` itself has to the raw threshold check.
+    """
+    if row.status != "Active":
+        return None
+    if break_eligible:
+        return as_of
+
+    baseline = row.active_duration_seconds_at_last_break or 0
+    remaining = max(0, (baseline + BREAK_THRESHOLD_SECONDS) - effective_duration)
+    raw_threshold_instant = as_of + timedelta(seconds=remaining)
+
+    suppression_expiry = _active_suppression_until(latest_break, as_of)
+    if suppression_expiry is not None and suppression_expiry > raw_threshold_instant:
+        return suppression_expiry
+    return raw_threshold_instant
 
 
 def start_session(session: Session, user_id: uuid.UUID, data: StudySessionCreate) -> StudySession:
@@ -370,6 +429,10 @@ def serialize_study_session(
             session_row, effective_duration, latest_break, as_of
         )
 
+    next_break_eligible_at = _compute_next_break_eligible_at(
+        session_row, effective_duration, latest_break, as_of, break_eligible=break_eligible
+    )
+
     task_snapshot = None
     if task is not None:
         subject_snapshot = None
@@ -401,6 +464,7 @@ def serialize_study_session(
         status=session_row.status,
         break_taken=session_row.break_taken,
         break_eligible=break_eligible,
+        next_break_eligible_at=next_break_eligible_at,
         created_at=_as_utc_instant(session_row.created_at),
         updated_at=_as_utc_instant(session_row.updated_at),
     )

@@ -158,6 +158,8 @@ def test_take_break_returns_201_composite_body(client, engine):
     assert body["break_event"]["session_id"] == session_id
     assert body["break_event"]["action"] == "TakeBreak"
     assert "user_id" not in body["break_event"]
+    # Checkpoint 9A: Paused after TakeBreak -> no future instant to schedule.
+    assert body["session"]["next_break_eligible_at"] is None
 
 
 def test_take_break_with_duration_minutes_is_recorded(client):
@@ -187,6 +189,10 @@ def test_snooze_leaves_session_active(client):
     body = response.json()
     assert body["session"]["status"] == "Active"
     assert body["session"]["break_taken"] is False
+    # Checkpoint 9A: still Active -> a future scheduling instant is present.
+    value = datetime.fromisoformat(body["session"]["next_break_eligible_at"])
+    assert value.tzinfo is not None
+    assert value > datetime.now(UTC)
 
 
 def test_dismiss_leaves_session_active(client):
@@ -194,7 +200,11 @@ def test_dismiss_leaves_session_active(client):
     session_id = _start(client, headers)["id"]
     response = client.post(_break_url(session_id), json={"action": "Dismiss"}, headers=headers)
     assert response.status_code == 201
-    assert response.json()["session"]["status"] == "Active"
+    body = response.json()
+    assert body["session"]["status"] == "Active"
+    value = datetime.fromisoformat(body["session"]["next_break_eligible_at"])
+    assert value.tzinfo is not None
+    assert value > datetime.now(UTC)
 
 
 # --- suppression window surfaced immediately, including on other routes ---
