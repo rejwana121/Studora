@@ -173,3 +173,63 @@ export interface SubtaskUpdate {
   title?: string;
   is_complete?: boolean;
 }
+
+/** Mirrors app/schemas/planner.py — deliberately NOT the full Task shape:
+ * no subtasks/notes/completed_at/reschedule_count/estimate_hours. */
+export interface PlannerTaskItem {
+  id: string;
+  subject_id: string | null;
+  subject: TaskSubjectSnapshot | null;
+  title: string;
+  type: TaskType;
+  deadline: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+}
+
+export interface CalendarResponse {
+  tasks: PlannerTaskItem[];
+  study_blocks: StudyBlockRead[];
+}
+
+export interface DayView {
+  date: string;
+  tasks: PlannerTaskItem[];
+  study_blocks: StudyBlockRead[];
+}
+
+/** Mirrors app/schemas/study_block.py. */
+export interface StudyBlockTaskSnapshot {
+  id: string;
+  title: string;
+  type: TaskType;
+  deadline: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  subject: TaskSubjectSnapshot | null;
+}
+
+export interface StudyBlockRead {
+  id: string;
+  task_id: string | null;
+  task: StudyBlockTaskSnapshot | null;
+  starts_at: string;
+  ends_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StudyBlockCreate {
+  task_id?: string | null;
+  starts_at: string;
+  ends_at: string;
+}
+
+/** PATCH /study-blocks/{id}. `task_id: null` unlinks (real command —
+ * nullable column). `starts_at`/`ends_at` are NOT NULL — omit to leave
+ * unchanged, never send null for these. Body must not be entirely empty. */
+export interface StudyBlockUpdate {
+  task_id?: string | null;
+  starts_at?: string;
+  ends_at?: string;
+}

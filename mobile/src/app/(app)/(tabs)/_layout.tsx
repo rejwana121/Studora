@@ -32,6 +32,10 @@ export default function TabsLayout() {
         options={{ title: 'Tasks', tabBarIcon: tabIcon('checkbox', 'checkbox-outline') }}
       />
       <Tabs.Screen
+        name="planner"
+        options={{ title: 'Planner', tabBarIcon: tabIcon('calendar', 'calendar-outline') }}
+      />
+      <Tabs.Screen
         name="subjects"
         options={{ title: 'Subjects', tabBarIcon: tabIcon('book', 'book-outline') }}
       />
