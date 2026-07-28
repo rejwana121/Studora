@@ -9,6 +9,8 @@ import {
   resumeSession,
   startSession,
 } from '@/api/sessions';
+import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
+import { reconcileBreakNotificationSchedule } from '@/features/notifications/schedule-break-notification';
 import type { ApiResult, BreakAction, StudySessionCreate, StudySessionRead } from '@/types/api';
 
 const RECONCILE_INTERVAL_MS = 30_000;
@@ -35,13 +37,22 @@ export interface UseFocusSessionResult {
   reconcileError: string | null;
   isMutating: boolean;
   mutationError: string | null;
+  /** Low-priority: a break-reminder OS-schedule sync failed. Never blocks
+   * or corrupts session/timer state — surface subtly if at all. */
+  notificationScheduleError: string | null;
+  /** Force-retries the break-reminder schedule sync against the
+   * currently known session. Pair with `notificationScheduleError`. */
+  retryNotificationSchedule: () => void;
   finishedElsewhereMessage: string | null;
   dismissFinishedElsewhereMessage: () => void;
   /** Mutation-priority-safe reconciliation trigger. Call this — never a
    * raw "GET /sessions" — from mount/focus, AppState-active, and the
    * internal 30s interval alike, so an in-flight mutation is never
-   * superseded by a poll. */
-  reconcile: () => void;
+   * superseded by a poll. `force` forwards to the break-notification
+   * schedule sync (see `schedule-break-notification.ts`) — set it for
+   * AppState-active and mutation-resolution reconciles, leave it unset
+   * for the plain 30s poll and screen-focus reconcile. */
+  reconcile: (options?: { force?: boolean }) => void;
   start: (taskId: string | null) => Promise<string | null>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
@@ -60,8 +71,13 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   const [isMutating, setIsMutating] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [reconcileError, setReconcileError] = useState<string | null>(null);
+  const [notificationScheduleError, setNotificationScheduleError] = useState<string | null>(null);
   const [finishedElsewhereMessage, setFinishedElsewhereMessage] = useState<string | null>(null);
   const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
+
+  const { permissionStatus } = useNotificationCoordinator();
+  const permissionGranted = permissionStatus === 'granted';
+  const permissionGrantedRef = useRef(permissionGranted);
 
   // `generationRef` is bumped at the SEND of every poll or mutation — a
   // response is applied only if the ref still matches what was captured
@@ -73,8 +89,13 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   const generationRef = useRef(0);
   const isMutatingRef = useRef(false);
   const pendingReconcileRef = useRef(false);
+  const pendingReconcileForceRef = useRef(false);
   const knownSessionIdRef = useRef<string | null>(null);
   const appStateRef = useRef(AppState.currentState);
+  // Guards `notificationScheduleError` against an older sync's result
+  // arriving after a newer one already resolved — only the result whose
+  // generation still matches at completion time is applied.
+  const notificationSyncGenerationRef = useRef(0);
 
   const applySnapshot = useCallback((row: StudySessionRead | null) => {
     knownSessionIdRef.current = row ? row.id : null;
@@ -89,6 +110,39 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
     setLastSyncedAtMs(Date.now());
   }, []);
 
+  // --- break-notification schedule sync: fire-and-forget, never allowed
+  // to block or corrupt session/timer state (see reconcileBreakNotification
+  // Schedule's own no-throw contract). `force` is threaded in explicitly
+  // by each call site per the locked force/no-force trigger list — an
+  // unforced call is a no-op unless the desired schedule actually changed.
+  const syncNotifications = useCallback(
+    (row: StudySessionRead | null, options?: { force?: boolean }) => {
+      const gen = ++notificationSyncGenerationRef.current;
+      void reconcileBreakNotificationSchedule(row, permissionGranted, { force: options?.force ?? false }).then(
+        (result) => {
+          if (notificationSyncGenerationRef.current !== gen) return; // superseded by a newer sync
+          setNotificationScheduleError(result.ok ? null : result.error);
+        }
+      );
+    },
+    [permissionGranted]
+  );
+
+  /** Explicit retry for a failed schedule sync — force-runs reconciliation
+   * against the currently known session. Never touches session/timer
+   * state and never blocks any Focus action. */
+  const retryNotificationSchedule = useCallback(() => {
+    syncNotifications(session, { force: true });
+  }, [session, syncNotifications]);
+
+  const applySnapshotAndSync = useCallback(
+    (row: StudySessionRead | null, force: boolean) => {
+      applySnapshot(row);
+      syncNotifications(row, { force });
+    },
+    [applySnapshot, syncNotifications]
+  );
+
   // --- reconciliation: GET /sessions?limit=1 (no status filter) -------
   // Provably sufficient: the DB's partial unique index guarantees at
   // most one unfinished (Active/Paused) session per user, and starting a
@@ -98,40 +152,48 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   // the single row `limit=1` (sorted started_at DESC) returns. One
   // request covers both Active and Paused, including a cross-device
   // Pause, with no need for two parallel status-filtered queries.
-  const reconcileNow = useCallback(async (): Promise<StudySessionRead | null> => {
-    if (!token) return null;
-    const gen = ++generationRef.current;
-    const result = await listSessions(token, { limit: 1 });
-    if (generationRef.current !== gen) return null; // superseded by a mutation or a later reconcile
-    if (!result.ok) {
-      setReconcileError(result.error.message);
-      return null;
-    }
-    setReconcileError(null);
-    const row = result.data[0] ?? null;
-    const isUnfinished = row !== null && (row.status === 'Active' || row.status === 'Paused');
-    const resolved = isUnfinished ? row : null;
+  const reconcileNow = useCallback(
+    async (options?: { force?: boolean }): Promise<StudySessionRead | null> => {
+      if (!token) return null;
+      const gen = ++generationRef.current;
+      const result = await listSessions(token, { limit: 1 });
+      if (generationRef.current !== gen) return null; // superseded by a mutation or a later reconcile
+      if (!result.ok) {
+        setReconcileError(result.error.message);
+        return null;
+      }
+      setReconcileError(null);
+      const row = result.data[0] ?? null;
+      const isUnfinished = row !== null && (row.status === 'Active' || row.status === 'Paused');
+      const resolved = isUnfinished ? row : null;
 
-    const wasKnown = knownSessionIdRef.current !== null;
-    applySnapshot(resolved);
+      const wasKnown = knownSessionIdRef.current !== null;
+      applySnapshotAndSync(resolved, options?.force ?? false);
 
-    if (wasKnown && resolved === null) {
-      setFinishedElsewhereMessage('This focus session was finished elsewhere.');
-    }
-    return resolved;
-  }, [token, applySnapshot]);
+      if (wasKnown && resolved === null) {
+        setFinishedElsewhereMessage('This focus session was finished elsewhere.');
+      }
+      return resolved;
+    },
+    [token, applySnapshotAndSync]
+  );
 
   // Public, mutation-priority-safe entry point: a reconciliation trigger
   // that fires while a mutation is pending is queued (at most one), not
   // dropped and not run immediately — it runs exactly once, after the
-  // mutation settles, via `runMutation` below.
-  const reconcile = useCallback(() => {
-    if (isMutatingRef.current) {
-      pendingReconcileRef.current = true;
-      return;
-    }
-    void reconcileNow();
-  }, [reconcileNow]);
+  // mutation settles, via `runMutation` below. If any queued request
+  // during that window asked for `force`, the queued run honors it.
+  const reconcile = useCallback(
+    (options?: { force?: boolean }) => {
+      if (isMutatingRef.current) {
+        pendingReconcileRef.current = true;
+        if (options?.force) pendingReconcileForceRef.current = true;
+        return;
+      }
+      void reconcileNow(options);
+    },
+    [reconcileNow]
+  );
 
   // --- mutation wrapper -------------------------------------------------
   // Bumps generation and sets isMutating BEFORE the network call — this
@@ -167,7 +229,9 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
       // pending — never before the mutation's own result is applied.
       if (pendingReconcileRef.current) {
         pendingReconcileRef.current = false;
-        void reconcileNow();
+        const force = pendingReconcileForceRef.current;
+        pendingReconcileForceRef.current = false;
+        void reconcileNow({ force });
       }
 
       return result;
@@ -183,47 +247,47 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
     async (taskId: string | null): Promise<string | null> => {
       if (!token) return 'Not signed in';
       const data: StudySessionCreate = { task_id: taskId };
-      const result = await runMutation(() => startSession(token, data), applySnapshot);
+      const result = await runMutation(() => startSession(token, data), (row) => applySnapshotAndSync(row, true));
       if (!result) return null;
       if (result.ok) return null;
       if (result.status === 409) {
         // Another start won the race (or a double-tap slipped through) —
         // recover gracefully by loading whatever now exists instead of
         // surfacing a raw conflict error.
-        await reconcileNow();
+        await reconcileNow({ force: true });
         return null;
       }
       return result.error.message;
     },
-    [token, runMutation, applySnapshot, reconcileNow]
+    [token, runMutation, applySnapshotAndSync, reconcileNow]
   );
 
   const pause = useCallback(async () => {
     if (!token || !session) return;
-    const result = await runMutation(() => pauseSession(token, session.id), applySnapshot);
+    const result = await runMutation(() => pauseSession(token, session.id), (row) => applySnapshotAndSync(row, true));
     if (result && !result.ok) {
       setMutationError(result.error.message);
-      await reconcileNow();
+      await reconcileNow({ force: true });
     }
-  }, [token, session, runMutation, applySnapshot, reconcileNow]);
+  }, [token, session, runMutation, applySnapshotAndSync, reconcileNow]);
 
   const resume = useCallback(async () => {
     if (!token || !session) return;
-    const result = await runMutation(() => resumeSession(token, session.id), applySnapshot);
+    const result = await runMutation(() => resumeSession(token, session.id), (row) => applySnapshotAndSync(row, true));
     if (result && !result.ok) {
       setMutationError(result.error.message);
-      await reconcileNow();
+      await reconcileNow({ force: true });
     }
-  }, [token, session, runMutation, applySnapshot, reconcileNow]);
+  }, [token, session, runMutation, applySnapshotAndSync, reconcileNow]);
 
   const finish = useCallback(async () => {
     if (!token || !session) return;
-    const result = await runMutation(() => finishSession(token, session.id), applySnapshot);
+    const result = await runMutation(() => finishSession(token, session.id), (row) => applySnapshotAndSync(row, true));
     if (result && !result.ok) {
       setMutationError(result.error.message);
-      await reconcileNow();
+      await reconcileNow({ force: true });
     }
-  }, [token, session, runMutation, applySnapshot, reconcileNow]);
+  }, [token, session, runMutation, applySnapshotAndSync, reconcileNow]);
 
   // --- break actions: NOT idempotent server-side (append-only event
   // log, no dedup) — an ambiguous network failure must never be resolved
@@ -237,7 +301,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
 
       const result = await runMutation(
         () => recordBreakAction(token, session.id, data),
-        (payload) => applySnapshot(payload.session)
+        (payload) => applySnapshotAndSync(payload.session, true)
       );
 
       if (!result) return 'superseded'; // a newer mutation started; this attempt's outcome no longer matters
@@ -246,7 +310,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
       // Ambiguous failure: we do not know whether the POST landed before
       // the error. Do NOT resend — reconcile and classify from the
       // server's own resulting truth instead of guessing.
-      const reconciled = await reconcileNow();
+      const reconciled = await reconcileNow({ force: true });
 
       if (action === 'TakeBreak') {
         if (reconciled === null || reconciled.status !== 'Active') {
@@ -272,7 +336,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
       }
       return 'resolved-no-retry'; // session no longer Active/unfinished — moot either way
     },
-    [token, session, runMutation, applySnapshot, reconcileNow]
+    [token, session, runMutation, applySnapshotAndSync, reconcileNow]
   );
 
   const takeBreak = useCallback(
@@ -295,11 +359,21 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
       const nowActive = next === 'active';
       setIsAppActive(nowActive);
       if (prev.match(/inactive|background/) && nowActive) {
-        reconcile();
+        reconcile({ force: true });
       }
     });
     return () => subscription.remove();
   }, [reconcile]);
+
+  // --- force a break-notification schedule sync when permission just
+  // changed (e.g. the user granted it from Focus's "Enable break
+  // reminders" card) — re-syncs against the currently known session
+  // without touching timer/session UI state. -----------------------------
+  useEffect(() => {
+    if (permissionGrantedRef.current === permissionGranted) return;
+    permissionGrantedRef.current = permissionGranted;
+    syncNotifications(session, { force: true });
+  }, [permissionGranted, session, syncNotifications]);
 
   // --- 30s reconciliation while locally Active AND the app is
   // foregrounded — stopped entirely otherwise, restarted automatically
@@ -331,6 +405,8 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
     reconcileError,
     isMutating,
     mutationError,
+    notificationScheduleError,
+    retryNotificationSchedule,
     finishedElsewhereMessage,
     dismissFinishedElsewhereMessage,
     reconcile,

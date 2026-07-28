@@ -73,7 +73,7 @@ export function SessionCard({ token, focus }: SessionCardProps) {
     return (
       <View style={styles.card}>
         <Banner variant="error" message={focus.reconcileError} />
-        <Button label="Retry" variant="secondary" onPress={focus.reconcile} />
+        <Button label="Retry" variant="secondary" onPress={() => focus.reconcile()} />
       </View>
     );
   }

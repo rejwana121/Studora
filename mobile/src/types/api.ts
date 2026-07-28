@@ -251,7 +251,11 @@ export interface StudySessionTaskSnapshot {
 /** `active_duration_seconds` is the server-computed *effective* value at
  * response time (includes elapsed time since the open segment if
  * Active) — never a raw stored column to re-derive client-side.
- * `break_eligible` is server-derived; never computed client-side. */
+ * `break_eligible` is server-derived; never computed client-side.
+ * `next_break_eligible_at` is server-derived from the same inputs as
+ * `break_eligible` (Checkpoint 9A) — `null` whenever the session is not
+ * Active, otherwise the next instant a break becomes eligible (or `now`
+ * if already eligible). Never computed client-side. */
 export interface StudySessionRead {
   id: string;
   task_id: string | null;
@@ -262,6 +266,7 @@ export interface StudySessionRead {
   status: StudySessionStatus;
   break_taken: boolean;
   break_eligible: boolean;
+  next_break_eligible_at: string | null;
   created_at: string;
   updated_at: string;
 }
