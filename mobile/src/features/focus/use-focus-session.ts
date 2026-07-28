@@ -13,6 +13,8 @@ import { useNotificationCoordinator } from '@/features/notifications/notificatio
 import { reconcileBreakNotificationSchedule } from '@/features/notifications/schedule-break-notification';
 import type { ApiResult, BreakAction, StudySessionCreate, StudySessionRead } from '@/types/api';
 
+import { useFocusBreakCue } from './use-focus-break-cue';
+
 const RECONCILE_INTERVAL_MS = 30_000;
 export const STALE_WARNING_MS = 60_000;
 
@@ -78,6 +80,8 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   const { permissionStatus } = useNotificationCoordinator();
   const permissionGranted = permissionStatus === 'granted';
   const permissionGrantedRef = useRef(permissionGranted);
+
+  useFocusBreakCue({ session, permissionStatus, isAppActive });
 
   // `generationRef` is bumped at the SEND of every poll or mutation — a
   // response is applied only if the ref still matches what was captured
