@@ -7,10 +7,20 @@ const path = require('path');
 const SAMPLE_RATE = 44100;
 const BITS_PER_SAMPLE = 16;
 const NUM_CHANNELS = 1;
-const PEAK_AMPLITUDE = Math.round(0.35 * 32767); // 11468, moderate but clearly audible
 
-const TONE_FREQ = 528;
-const DURATION_S = 0.9;
+// Fundamental + a phase-locked octave overtone (exact 2:1 ratio, so the
+// two stay consonant with no beating). Weights solved so the combined
+// worst-case peak lands at ~0.52 FS: for phase-aligned sines at a 2:1
+// ratio with weights A and 0.4A, the combined peak factor is ~1.214*A
+// (root of f'(theta)=0 for f(theta) = sin(theta) + 0.4*sin(2*theta)).
+const FUNDAMENTAL_FREQ = 528;
+const OVERTONE_FREQ = 1056;
+const FUNDAMENTAL_PEAK_RATIO = 0.4283;
+const OVERTONE_PEAK_RATIO = 0.1713;
+const FUNDAMENTAL_AMPLITUDE = Math.round(FUNDAMENTAL_PEAK_RATIO * 32767);
+const OVERTONE_AMPLITUDE = Math.round(OVERTONE_PEAK_RATIO * 32767);
+
+const DURATION_S = 1.1;
 
 const OUTPUT_PATH = path.join(__dirname, '..', 'assets', 'audio', 'focus-break-cue.wav');
 
@@ -21,13 +31,18 @@ function secondsToSamples(seconds) {
 // Full-window Hann envelope: rises smoothly from 0 to a single peak at the
 // midpoint and back to 0, so both endpoints are exactly silent (no click)
 // and the tone reads as one soft swell rather than a flat-sustained beep.
-function generateSwellTone(freq, totalSamples, peakAmplitude) {
+// The fundamental and overtone share this exact same envelope, so they
+// rise and fall in perfect sync as one unified tone.
+function generateSwellTone(totalSamples) {
   const samples = new Int16Array(totalSamples);
   const lastIndex = totalSamples - 1;
   for (let i = 0; i < totalSamples; i++) {
     const envelope = 0.5 * (1 - Math.cos((2 * Math.PI * i) / lastIndex));
     const t = i / SAMPLE_RATE;
-    const value = peakAmplitude * envelope * Math.sin(2 * Math.PI * freq * t);
+    const value =
+      envelope *
+      (FUNDAMENTAL_AMPLITUDE * Math.sin(2 * Math.PI * FUNDAMENTAL_FREQ * t) +
+        OVERTONE_AMPLITUDE * Math.sin(2 * Math.PI * OVERTONE_FREQ * t));
     samples[i] = Math.round(value);
   }
   return samples;
@@ -118,7 +133,7 @@ function verifyWavFile(filePath, expectedSamples) {
 function main() {
   const totalSamples = secondsToSamples(DURATION_S);
 
-  const samples = generateSwellTone(TONE_FREQ, totalSamples, PEAK_AMPLITUDE);
+  const samples = generateSwellTone(totalSamples);
 
   const wavBuffer = buildWavBuffer(samples);
 
@@ -148,7 +163,7 @@ function main() {
   console.log('');
   console.log('Amplitude verification:');
   console.log(
-    `  Peak sample:       ${report.peak} / 32767 (ratio ${report.peakRatio.toFixed(4)}, expected ~0.3500)`
+    `  Peak sample:       ${report.peak} / 32767 (ratio ${report.peakRatio.toFixed(4)}, expected ~0.50-0.55)`
   );
   console.log(`  Clipping:          ${report.clipped ? 'CLIPPED - FAIL' : 'none - OK'}`);
   console.log('');
