@@ -102,7 +102,18 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   const notificationSyncGenerationRef = useRef(0);
 
   const applySnapshot = useCallback((row: StudySessionRead | null) => {
+    const previousSessionId = knownSessionIdRef.current;
     knownSessionIdRef.current = row ? row.id : null;
+    if (row && row.id !== previousSessionId) {
+      // A genuinely different session just became current (a fresh
+      // start, or the same-slot session id changing) — any
+      // "finished elsewhere" message was about a prior session and must
+      // not linger over this one. The same session reconciling again
+      // (row.id === previousSessionId) leaves the message untouched, and
+      // a real disappearance is still handled by reconcileNow setting it
+      // fresh afterward.
+      setFinishedElsewhereMessage(null);
+    }
     setSession(row);
     setPhase(row ? (row.status === 'Active' ? 'active' : 'paused') : 'no-session');
     setSnapshot(
