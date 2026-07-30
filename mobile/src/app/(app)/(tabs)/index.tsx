@@ -1,6 +1,6 @@
 import { router, useFocusEffect, type Href } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { getTasksToday } from '@/api/tasks';
 import { Banner } from '@/components/banner';
@@ -18,20 +18,29 @@ export default function TodayScreen() {
   const [view, setView] = useState<TaskTodayView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const isFetchingRef = useRef(false);
 
-  const load = useCallback(() => {
-    if (!session) return;
-    setIsLoading(true);
-    getTasksToday(session.access_token).then((result) => {
-      if (result.ok) {
-        setView(result.data);
-        setLoadError(null);
-      } else {
-        setLoadError(result.error.message);
-      }
-      setIsLoading(false);
-    });
-  }, [session]);
+  const load = useCallback(
+    (isRefresh = false) => {
+      if (!session || isFetchingRef.current) return;
+      isFetchingRef.current = true;
+      if (isRefresh) setIsRefreshing(true);
+      else setIsLoading(true);
+      getTasksToday(session.access_token).then((result) => {
+        isFetchingRef.current = false;
+        if (result.ok) {
+          setView(result.data);
+          setLoadError(null);
+        } else {
+          setLoadError(result.error.message);
+        }
+        if (isRefresh) setIsRefreshing(false);
+        else setIsLoading(false);
+      });
+    },
+    [session]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -54,15 +63,23 @@ export default function TodayScreen() {
       {!isLoading && loadError && <Banner variant="error" message={loadError} />}
 
       {!isLoading && !loadError && isEmpty && (
-        <EmptyState
-          message="No tasks yet"
-          actionLabel="Add your first task"
-          onAction={() => router.push('/tasks/new' as Href)}
-        />
+        <ScrollView
+          contentContainerStyle={styles.emptyScroll}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => load(true)} />}
+        >
+          <EmptyState
+            message="No tasks yet"
+            actionLabel="Add your first task"
+            onAction={() => router.push('/tasks/new' as Href)}
+          />
+        </ScrollView>
       )}
 
       {!isLoading && !loadError && view && !isEmpty && (
-        <ScrollView contentContainerStyle={styles.sections}>
+        <ScrollView
+          contentContainerStyle={styles.sections}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => load(true)} />}
+        >
           <Section title="Overdue" tasks={view.overdue} />
           <Section title="Due soon (72h)" tasks={view.due_soon} />
           <Section title="High priority" tasks={view.high_priority} />
@@ -105,6 +122,9 @@ const styles = StyleSheet.create({
     fontSize: typeTokens.caption.fontSize,
     color: color.text.secondary,
     textTransform: 'uppercase',
+  },
+  emptyScroll: {
+    flexGrow: 1,
   },
   sections: {
     gap: space.lg,

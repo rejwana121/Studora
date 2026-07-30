@@ -1,6 +1,6 @@
 import { router, useFocusEffect, type Href } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { listTasks } from '@/api/tasks';
 import { Banner } from '@/components/banner';
@@ -45,20 +45,29 @@ export default function TasksScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [segment, setSegment] = useState<Segment>('all');
   const [search, setSearch] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const isFetchingRef = useRef(false);
 
-  const load = useCallback(() => {
-    if (!session) return;
-    setIsLoading(true);
-    listTasks(session.access_token, { sort: 'deadline_asc', limit: 100 }).then((result) => {
-      if (result.ok) {
-        setTasks(result.data);
-        setLoadError(null);
-      } else {
-        setLoadError(result.error.message);
-      }
-      setIsLoading(false);
-    });
-  }, [session]);
+  const load = useCallback(
+    (isRefresh = false) => {
+      if (!session || isFetchingRef.current) return;
+      isFetchingRef.current = true;
+      if (isRefresh) setIsRefreshing(true);
+      else setIsLoading(true);
+      listTasks(session.access_token, { sort: 'deadline_asc', limit: 100 }).then((result) => {
+        isFetchingRef.current = false;
+        if (result.ok) {
+          setTasks(result.data);
+          setLoadError(null);
+        } else {
+          setLoadError(result.error.message);
+        }
+        if (isRefresh) setIsRefreshing(false);
+        else setIsLoading(false);
+      });
+    },
+    [session]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -109,15 +118,25 @@ export default function TasksScreen() {
       {!isLoading && loadError && <Banner variant="error" message={loadError} />}
 
       {!isLoading && !loadError && tasks && tasks.length === 0 && (
-        <EmptyState
-          message="No tasks yet"
-          actionLabel="Add your first task"
-          onAction={() => router.push('/tasks/new' as Href)}
-        />
+        <ScrollView
+          contentContainerStyle={styles.emptyScroll}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => load(true)} />}
+        >
+          <EmptyState
+            message="No tasks yet"
+            actionLabel="Add your first task"
+            onAction={() => router.push('/tasks/new' as Href)}
+          />
+        </ScrollView>
       )}
 
       {!isLoading && !loadError && tasks && tasks.length > 0 && filtered.length === 0 && (
-        <EmptyState message={`No ${segment === 'all' ? '' : segment} tasks`} />
+        <ScrollView
+          contentContainerStyle={styles.emptyScroll}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => load(true)} />}
+        >
+          <EmptyState message={`No ${segment === 'all' ? '' : segment} tasks`} />
+        </ScrollView>
       )}
 
       {!isLoading && !loadError && filtered.length > 0 && (
@@ -130,6 +149,7 @@ export default function TasksScreen() {
           ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
           style={styles.listFlex}
           contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => load(true)} />}
         />
       )}
 
@@ -172,6 +192,9 @@ const styles = StyleSheet.create({
   },
   listFlex: {
     flex: 1,
+  },
+  emptyScroll: {
+    flexGrow: 1,
   },
   list: {
     paddingBottom: space.xxl,
