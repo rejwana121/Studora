@@ -69,7 +69,7 @@ export function SessionCard({ token, focus }: SessionCardProps) {
     );
   }
 
-  if (focus.reconcileError) {
+  if (focus.reconcileError && !focus.session) {
     return (
       <View style={styles.card}>
         <Banner variant="error" message={focus.reconcileError} />
@@ -188,6 +188,7 @@ export function SessionCard({ token, focus }: SessionCardProps) {
         </ThemedText>
       )}
 
+      {focus.reconcileError && <Banner variant="error" message={focus.reconcileError} />}
       {focus.mutationError && <Banner variant="error" message={focus.mutationError} />}
 
       <View style={styles.actions}>
