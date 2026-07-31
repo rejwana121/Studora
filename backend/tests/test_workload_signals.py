@@ -1,13 +1,26 @@
-"""Batch 2A tests for app.services.workload.signals — Deadline, Importance,
-and Feasibility extraction only. Uses the raw `engine`/`Session` fixture
-(no HTTP client) and constructs Task/StudyBlock rows directly, same
-pattern as tests/test_planner_service.py's `_query_window` tests.
+"""Tests for app.services.workload.signals — Batch 2A (Deadline,
+Importance, Feasibility) and Batch 2B (Backlog, Completion, Study) plus
+the `extract_signals()` orchestrator. Uses the raw `engine`/`Session`
+fixture (no HTTP client) and constructs Task/Subtask/StudyBlock/
+StudySession/StudySessionBreak rows directly, same pattern as
+tests/test_planner_service.py's `_query_window` tests.
 
-Covers: rolling-window boundaries (overdue/24h/48h/72h edges), Study Block
-interval clipping and overlap/touch merging, the per-task non-negative
-clamp and cross-task surplus/deficit isolation, missing-estimate handling,
-ownership isolation, zero-data behavior, relevant_task_ids composition,
-and the exact 2-query bound as row counts grow.
+Batch 2A coverage: rolling-window boundaries (overdue/24h/48h/72h edges),
+Study Block interval clipping and overlap/touch merging, the per-task
+non-negative clamp and cross-task surplus/deficit isolation,
+missing-estimate handling, ownership isolation, zero-data behavior,
+relevant_task_ids composition, and the exact 2-query bound as row counts
+grow.
+
+Batch 2B coverage: the exact 24h backlog boundary, subtask
+ratio/ownership, completion-delay clamping and 14-day edges, active-only
+lifetime reschedule sum, the exact 5399s/5400s Active-segment boundary,
+proof that Finished/Paused aggregate duration never sets
+long_continuous_session_flag, TakeBreak/Snooze/Dismiss/no-event effects
+on missed_break_count, the 7-day boundary, deterministic
+relevant_task_ids, a realistic full `extract_signals()` fixture, and the
+bounded whole-orchestrator query-count proof (6 with break candidates, 5
+without).
 """
 
 import uuid
@@ -17,11 +30,17 @@ from sqlalchemy import event
 from sqlmodel import Session
 
 from app.models.study_block import StudyBlock
+from app.models.study_session import StudySession
+from app.models.study_session_break import StudySessionBreak
+from app.models.subtask import Subtask
 from app.models.task import Task
 from app.services.workload.signals import (
     _clipped_scheduled_hours,
+    _fetch_active_tasks,
     _merge_intervals,
+    extract_backlog_completion_study_signals,
     extract_deadline_importance_feasibility_signals,
+    extract_signals,
 )
 
 NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
@@ -45,6 +64,63 @@ def _block(
     user_id: uuid.UUID, task_id: uuid.UUID, starts_at: datetime, ends_at: datetime
 ) -> StudyBlock:
     return StudyBlock(user_id=user_id, task_id=task_id, starts_at=starts_at, ends_at=ends_at)
+
+
+def _subtask(user_id: uuid.UUID, task_id: uuid.UUID, **overrides) -> Subtask:
+    defaults = dict(user_id=user_id, task_id=task_id, title="Subtask", is_complete=False)
+    defaults.update(overrides)
+    return Subtask(**defaults)
+
+
+def _finished_session(
+    user_id: uuid.UUID, started_at: datetime, active_duration_seconds: int, **overrides
+) -> StudySession:
+    defaults = dict(
+        user_id=user_id,
+        started_at=started_at,
+        ended_at=started_at + timedelta(seconds=active_duration_seconds),
+        active_duration_seconds=active_duration_seconds,
+        status="Finished",
+        active_segment_started_at=None,
+    )
+    defaults.update(overrides)
+    return StudySession(**defaults)
+
+
+def _active_session(
+    user_id: uuid.UUID, active_segment_started_at: datetime, **overrides
+) -> StudySession:
+    defaults = dict(
+        user_id=user_id,
+        started_at=active_segment_started_at,
+        active_duration_seconds=0,
+        status="Active",
+        active_segment_started_at=active_segment_started_at,
+    )
+    defaults.update(overrides)
+    return StudySession(**defaults)
+
+
+def _paused_session(
+    user_id: uuid.UUID, started_at: datetime, active_duration_seconds: int, **overrides
+) -> StudySession:
+    defaults = dict(
+        user_id=user_id,
+        started_at=started_at,
+        active_duration_seconds=active_duration_seconds,
+        status="Paused",
+        active_segment_started_at=None,
+    )
+    defaults.update(overrides)
+    return StudySession(**defaults)
+
+
+def _break_event(
+    user_id: uuid.UUID, session_id: uuid.UUID, action: str, **overrides
+) -> StudySessionBreak:
+    defaults = dict(user_id=user_id, session_id=session_id, action=action, prompted_at=NOW)
+    defaults.update(overrides)
+    return StudySessionBreak(**defaults)
 
 
 # --- _merge_intervals: pure unit tests ---
@@ -452,3 +528,602 @@ def test_query_count_is_exactly_2_and_flat_as_rows_increase(engine):
             counts.append(_count_select_statements(engine, _run))
 
     assert counts == [2, 2]
+
+
+# =====================================================================
+# Batch 2B: Backlog, Completion, Study
+# =====================================================================
+
+
+# --- overdue_backlog_count: exact 24h boundary ---
+
+
+def test_overdue_backlog_exact_24h_boundary_not_counted(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW - timedelta(hours=24)))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["overdue_backlog_count"] == 0
+
+
+def test_overdue_backlog_just_over_24h_is_counted(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW - timedelta(hours=24, seconds=1)))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["overdue_backlog_count"] == 1
+
+
+def test_overdue_backlog_excludes_completed_and_cancelled(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW - timedelta(days=10), status="Completed"))
+        session.add(_task(user_id, NOW - timedelta(days=10), status="Cancelled"))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["overdue_backlog_count"] == 0
+
+
+# --- incomplete_subtask_ratio ---
+
+
+def test_incomplete_subtask_ratio_zero_subtasks_is_zero(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=10)))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["incomplete_subtask_ratio"] == 0.0
+
+
+def test_incomplete_subtask_ratio_all_complete(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        task = _task(user_id, NOW + timedelta(hours=10))
+        session.add(task)
+        session.flush()
+        session.add(_subtask(user_id, task.id, is_complete=True))
+        session.add(_subtask(user_id, task.id, is_complete=True))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["incomplete_subtask_ratio"] == 0.0
+
+
+def test_incomplete_subtask_ratio_all_incomplete(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        task = _task(user_id, NOW + timedelta(hours=10))
+        session.add(task)
+        session.flush()
+        session.add(_subtask(user_id, task.id, is_complete=False))
+        session.add(_subtask(user_id, task.id, is_complete=False))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["incomplete_subtask_ratio"] == 1.0
+
+
+def test_incomplete_subtask_ratio_mixed(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        task = _task(user_id, NOW + timedelta(hours=10))
+        session.add(task)
+        session.flush()
+        session.add(_subtask(user_id, task.id, is_complete=True))
+        session.add(_subtask(user_id, task.id, is_complete=False))
+        session.add(_subtask(user_id, task.id, is_complete=False))
+        session.add(_subtask(user_id, task.id, is_complete=False))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["incomplete_subtask_ratio"] == 0.75
+
+
+def test_incomplete_subtask_ratio_excludes_subtasks_of_completed_task(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        completed_task = _task(user_id, NOW - timedelta(hours=1), status="Completed")
+        session.add(completed_task)
+        session.flush()
+        session.add(_subtask(user_id, completed_task.id, is_complete=False))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["incomplete_subtask_ratio"] == 0.0
+
+
+def test_incomplete_subtask_ratio_ownership_isolation(engine):
+    owner_a = uuid.uuid4()
+    owner_b = uuid.uuid4()
+    with Session(engine) as session:
+        task_a = _task(owner_a, NOW + timedelta(hours=10))
+        task_b = _task(owner_b, NOW + timedelta(hours=10))
+        session.add(task_a)
+        session.add(task_b)
+        session.flush()
+        session.add(_subtask(owner_a, task_a.id, is_complete=True))
+        session.add(_subtask(owner_b, task_b.id, is_complete=False))
+        session.commit()
+        active_tasks_a = _fetch_active_tasks(session, owner_a)
+        result_a = extract_backlog_completion_study_signals(
+            session, owner_a, active_tasks_a, now=NOW
+        )
+    assert result_a["incomplete_subtask_ratio"] == 0.0
+
+
+# --- recent_completion_delay_avg ---
+
+
+def test_completion_delay_early_completion_clamped_to_zero(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        deadline = NOW - timedelta(days=1)
+        task = _task(
+            user_id,
+            deadline,
+            status="Completed",
+            completed_at=deadline - timedelta(hours=3),  # finished 3h early
+        )
+        session.add(task)
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["recent_completion_delay_avg"] == 0.0
+
+
+def test_completion_delay_late_completion_is_positive(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        deadline = NOW - timedelta(days=1)
+        task = _task(
+            user_id, deadline, status="Completed", completed_at=deadline + timedelta(hours=5)
+        )
+        session.add(task)
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["recent_completion_delay_avg"] == 5.0
+
+
+def test_completion_delay_averages_early_and_late(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        deadline = NOW - timedelta(days=1)
+        # Early (clamped to 0) + 10h late -> average (0 + 10) / 2 = 5.
+        session.add(
+            _task(
+                user_id,
+                deadline,
+                status="Completed",
+                completed_at=deadline - timedelta(hours=2),
+                title="early",
+            )
+        )
+        session.add(
+            _task(
+                user_id,
+                deadline,
+                status="Completed",
+                completed_at=deadline + timedelta(hours=10),
+                title="late",
+            )
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["recent_completion_delay_avg"] == 5.0
+
+
+def test_completion_delay_14_day_boundary_inclusive(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        deadline = NOW - timedelta(days=15)
+        task = _task(
+            user_id,
+            deadline,
+            status="Completed",
+            completed_at=NOW - timedelta(days=14),  # exactly 14 days ago
+        )
+        session.add(task)
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["recent_completion_delay_avg"] is not None
+
+
+def test_completion_delay_just_outside_14_day_window_excluded(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        deadline = NOW - timedelta(days=15)
+        task = _task(
+            user_id,
+            deadline,
+            status="Completed",
+            completed_at=NOW - timedelta(days=14, seconds=1),
+        )
+        session.add(task)
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["recent_completion_delay_avg"] is None
+
+
+def test_completion_delay_no_qualifying_completions_returns_none(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=10)))  # not completed
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["recent_completion_delay_avg"] is None
+
+
+def test_completion_delay_ownership_isolation(engine):
+    owner_a = uuid.uuid4()
+    owner_b = uuid.uuid4()
+    with Session(engine) as session:
+        deadline = NOW - timedelta(days=1)
+        session.add(
+            _task(owner_a, deadline, status="Completed", completed_at=deadline + timedelta(hours=1))
+        )
+        session.add(
+            _task(
+                owner_b, deadline, status="Completed", completed_at=deadline + timedelta(hours=99)
+            )
+        )
+        session.commit()
+        active_tasks_a = _fetch_active_tasks(session, owner_a)
+        result_a = extract_backlog_completion_study_signals(
+            session, owner_a, active_tasks_a, now=NOW
+        )
+    assert result_a["recent_completion_delay_avg"] == 1.0
+
+
+# --- reschedule_count_lifetime: active tasks only ---
+
+
+def test_reschedule_lifetime_sums_active_tasks_only(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=10), reschedule_count=3, status="Pending"))
+        session.add(
+            _task(user_id, NOW + timedelta(hours=20), reschedule_count=2, status="InProgress")
+        )
+        # Completed/Cancelled tasks' reschedule history must NOT be summed.
+        session.add(
+            _task(user_id, NOW - timedelta(days=1), reschedule_count=100, status="Completed")
+        )
+        session.add(
+            _task(user_id, NOW - timedelta(days=1), reschedule_count=100, status="Cancelled")
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["reschedule_count_lifetime"] == 5
+
+
+def test_reschedule_lifetime_zero_when_no_active_tasks(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(
+            _task(user_id, NOW - timedelta(days=1), reschedule_count=7, status="Completed")
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["reschedule_count_lifetime"] == 0
+
+
+# --- long_continuous_session_flag ---
+
+
+def test_long_session_flag_active_segment_5399s_is_false(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_active_session(user_id, NOW - timedelta(seconds=5399)))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["long_continuous_session_flag"] is False
+
+
+def test_long_session_flag_active_segment_5400s_is_true(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_active_session(user_id, NOW - timedelta(seconds=5400)))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["long_continuous_session_flag"] is True
+
+
+def test_long_session_flag_paused_session_aggregate_duration_not_used(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        # Huge aggregate duration, but Paused -> no open segment -> must
+        # not set the flag via aggregate duration alone.
+        session.add(
+            _paused_session(user_id, NOW - timedelta(hours=5), active_duration_seconds=99999)
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["long_continuous_session_flag"] is False
+
+
+def test_long_session_flag_finished_session_aggregate_duration_not_used(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(
+            _finished_session(user_id, NOW - timedelta(hours=5), active_duration_seconds=99999)
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["long_continuous_session_flag"] is False
+
+
+def test_long_session_flag_no_session_at_all_is_false(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["long_continuous_session_flag"] is False
+
+
+# --- missed_break_count ---
+
+
+def test_missed_break_counts_long_finished_session_with_no_break_event(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(
+            _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5400)
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["missed_break_count"] == 1
+
+
+def test_missed_break_takebreak_event_excludes_session(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        s = _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5400)
+        session.add(s)
+        session.flush()
+        session.add(_break_event(user_id, s.id, "TakeBreak", duration_minutes=15))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["missed_break_count"] == 0
+
+
+def test_missed_break_snooze_event_still_counts(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        s = _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5400)
+        session.add(s)
+        session.flush()
+        session.add(_break_event(user_id, s.id, "Snooze", duration_minutes=10))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["missed_break_count"] == 1
+
+
+def test_missed_break_dismiss_event_still_counts(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        s = _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5400)
+        session.add(s)
+        session.flush()
+        session.add(_break_event(user_id, s.id, "Dismiss"))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["missed_break_count"] == 1
+
+
+def test_missed_break_session_under_threshold_not_counted(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(
+            _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5399)
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["missed_break_count"] == 0
+
+
+def test_missed_break_session_exactly_7_days_ago_is_included(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(
+            _finished_session(user_id, NOW - timedelta(days=7), active_duration_seconds=5400)
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["missed_break_count"] == 1
+
+
+def test_missed_break_session_just_past_7_days_excluded(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(
+            _finished_session(
+                user_id, NOW - timedelta(days=7, seconds=1), active_duration_seconds=5400
+            )
+        )
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["missed_break_count"] == 0
+
+
+def test_missed_break_only_finished_sessions_judged_not_active_or_paused(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_active_session(user_id, NOW - timedelta(hours=3)))
+        session.commit()
+        active_tasks = _fetch_active_tasks(session, user_id)
+        result = extract_backlog_completion_study_signals(session, user_id, active_tasks, now=NOW)
+    assert result["missed_break_count"] == 0
+
+
+def test_missed_break_ownership_isolation_across_sessions_and_breaks(engine):
+    owner_a = uuid.uuid4()
+    owner_b = uuid.uuid4()
+    with Session(engine) as session:
+        s_a = _finished_session(owner_a, NOW - timedelta(days=1), active_duration_seconds=5400)
+        s_b = _finished_session(owner_b, NOW - timedelta(days=1), active_duration_seconds=5400)
+        session.add(s_a)
+        session.add(s_b)
+        session.flush()
+        # owner_b's TakeBreak must never affect owner_a's count.
+        session.add(_break_event(owner_b, s_b.id, "TakeBreak", duration_minutes=15))
+        session.commit()
+        active_tasks_a = _fetch_active_tasks(session, owner_a)
+        result_a = extract_backlog_completion_study_signals(
+            session, owner_a, active_tasks_a, now=NOW
+        )
+    assert result_a["missed_break_count"] == 1
+
+
+# =====================================================================
+# extract_signals(): the full orchestrator
+# =====================================================================
+
+
+def test_extract_signals_realistic_combined_fixture(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        overdue = _task(user_id, NOW - timedelta(hours=1), priority="High")
+        due_soon = _task(user_id, NOW + timedelta(hours=10), estimate_hours=4.0, type="Quiz")
+        session.add(overdue)
+        session.add(due_soon)
+        session.flush()
+        session.add(_subtask(user_id, due_soon.id, is_complete=False))
+        session.add(_subtask(user_id, due_soon.id, is_complete=True))
+        session.add(
+            _task(
+                user_id,
+                NOW - timedelta(days=1),
+                status="Completed",
+                completed_at=NOW - timedelta(days=1) + timedelta(hours=2),
+            )
+        )
+        finished = _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5400)
+        session.add(finished)
+        session.commit()
+
+        result = extract_signals(session, user_id, now=NOW)
+
+    assert result.overdue_count == 1
+    assert result.due_72h_count == 1
+    # The High-priority task is overdue, not due-soon.
+    assert result.high_priority_due_soon_count == 0
+    assert result.assessment_type_due_soon_count == 1
+    assert result.unscheduled_estimate_hours == 4.0
+    assert result.incomplete_subtask_ratio == 0.5
+    assert result.recent_completion_delay_avg == 2.0
+    assert result.missed_break_count == 1
+    assert due_soon.id in result.relevant_task_ids
+    assert overdue.id in result.relevant_task_ids
+
+
+def test_extract_signals_relevant_task_ids_deterministic_and_stably_ordered(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=5), title="B"))
+        session.add(_task(user_id, NOW - timedelta(hours=1), title="A-overdue"))
+        session.add(_task(user_id, NOW + timedelta(hours=1), title="C"))
+        session.commit()
+
+        first = extract_signals(session, user_id, now=NOW)
+        second = extract_signals(session, user_id, now=NOW)
+
+    assert first.relevant_task_ids == second.relevant_task_ids
+    # Stable order tied to the underlying (deadline, id) query order, not
+    # to Python set/hash iteration order.
+    assert len(first.relevant_task_ids) == len(set(first.relevant_task_ids))
+
+
+def test_extract_signals_accepts_injectable_now(engine):
+    user_id = uuid.uuid4()
+    fixed_now = datetime(2026, 1, 1, tzinfo=UTC)
+    with Session(engine) as session:
+        # A task overdue relative to fixed_now but not relative to real
+        # wall-clock "now" proves `now` is genuinely used, not ignored.
+        session.add(_task(user_id, fixed_now + timedelta(hours=1)))
+        session.commit()
+        result_before_deadline = extract_signals(session, user_id, now=fixed_now)
+        result_after_deadline = extract_signals(
+            session, user_id, now=fixed_now + timedelta(hours=2)
+        )
+    assert result_before_deadline.overdue_count == 0
+    assert result_after_deadline.overdue_count == 1
+
+
+def test_extract_signals_query_count_bounded_5_without_break_candidates(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=5)))
+        session.commit()
+
+        def _run():
+            extract_signals(session, user_id, now=NOW)
+
+        count = _count_select_statements(engine, _run)
+    assert count == 5
+
+
+def test_extract_signals_query_count_bounded_6_with_break_candidates(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        s = _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5400)
+        session.add(s)
+        session.commit()
+
+        def _run():
+            extract_signals(session, user_id, now=NOW)
+
+        count = _count_select_statements(engine, _run)
+    assert count == 6
+
+
+def test_extract_signals_query_count_flat_as_rows_increase(engine):
+    user_id = uuid.uuid4()
+    counts = []
+    with Session(engine) as session:
+        for n in (2, 20):
+            for i in range(n):
+                task = _task(user_id, NOW + timedelta(hours=1, minutes=i), estimate_hours=1.0)
+                session.add(task)
+                session.flush()
+                session.add(
+                    _block(
+                        user_id,
+                        task.id,
+                        NOW + timedelta(minutes=i),
+                        NOW + timedelta(minutes=i, hours=1),
+                    )
+                )
+                session.add(_subtask(user_id, task.id, is_complete=(i % 2 == 0)))
+            session.commit()
+
+            def _run():
+                extract_signals(session, user_id, now=NOW)
+
+            counts.append(_count_select_statements(engine, _run))
+
+    assert counts == [5, 5]

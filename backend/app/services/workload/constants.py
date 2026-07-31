@@ -21,6 +21,17 @@ ASSESSMENT_TYPES: frozenset[str] = frozenset(
     {"Quiz", "Midterm", "FinalExam", "Project", "Presentation"}
 )
 
+# Batch 2B thresholds/windows (Checkpoint -- approved).
+OVERDUE_BACKLOG_HOURS = 24
+COMPLETION_DELAY_LOOKBACK_DAYS = 14
+# Deliberately separate from the Focus feature's own
+# app.services.study_session.BREAK_THRESHOLD_SECONDS (3000s/50min, a
+# different product decision about when to prompt a break) -- this is the
+# workload engine's own threshold for "long" study time (spec's own
+# example, 90 minutes).
+WORKLOAD_LONG_SESSION_SECONDS = 5400
+MISSED_BREAK_LOOKBACK_DAYS = 7
+
 # Signal -> spec §11.1 group, used to label factors in the response.
 GROUP_OF: dict[str, str] = {
     "overdue_count": "Deadline",

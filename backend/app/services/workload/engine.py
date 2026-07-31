@@ -79,14 +79,19 @@ _EXPLANATION_TEMPLATES = {
         if v is None
         else f"Tasks completed in the last 14 days finished {v:.1f}h late on average."
     ),
-    "reschedule_count_lifetime": lambda v: f"{v} reschedule(s) recorded (all-time).",
+    "reschedule_count_lifetime": (
+        lambda v: f"{v} reschedules on active tasks (all-time per task)."
+    ),
     "long_continuous_session_flag": (
-        lambda v: "A recent study session ran long without a break."
+        lambda v: "The current study session has been running continuously for at least "
+        "90 minutes without a break."
         if v
-        else "No recent study session has run long without a break."
+        else "No study session is currently running continuously for 90+ minutes without "
+        "a break."
     ),
     "missed_break_count": (
-        lambda v: f"{v} study session(s) in the last 7 days ran long without a break."
+        lambda v: f"{v} long finished session(s) without a recorded Take Break in the last "
+        "7 days."
     ),
 }
 
