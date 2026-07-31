@@ -1,6 +1,7 @@
-import { useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { router, useFocusEffect, type Href } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { getCurrentWorkload } from '@/api/workload';
 import { Banner } from '@/components/banner';
@@ -9,7 +10,14 @@ import { EmptyState } from '@/components/empty-state';
 import { Screen } from '@/components/screen';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
-import { color, radius, riskLevelTokens, space, type as typeTokens } from '@/design-system/tokens';
+import {
+  color,
+  radius,
+  riskLevelTokens,
+  space,
+  touchTarget,
+  type as typeTokens,
+} from '@/design-system/tokens';
 import type {
   WorkloadCurrentResponse,
   WorkloadFactor,
@@ -23,6 +31,44 @@ const RISK_KEY_BY_LEVEL: Record<WorkloadLevel, keyof typeof riskLevelTokens> = {
   High: 'high',
   Critical: 'critical',
 };
+
+const LEVEL_SUMMARY_TEXT: Record<WorkloadLevel, string> = {
+  Low: 'Your current academic workload appears manageable.',
+  Moderate: 'Your workload needs some attention.',
+  High: 'Your workload is currently heavy.',
+  Critical: 'Your workload needs immediate attention.',
+};
+
+/** A factor is worth showing under "What's contributing" only if it
+ * actually contributed something — a strong signal, a true flag, or a
+ * positive numeric value. Zero/false/null factors are real engine output
+ * (every signal group is always present) but are non-contributing noise
+ * for this summary view. */
+function isMeaningfulFactor(factor: WorkloadFactor): boolean {
+  if (factor.is_strong) return true;
+  if (typeof factor.value === 'boolean') return factor.value;
+  if (typeof factor.value === 'number') return factor.value > 0;
+  return false;
+}
+
+function BackRow() {
+  return (
+    <View style={styles.topBar}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+        hitSlop={space.xs}
+        onPress={() => router.back()}
+        style={({ pressed }) => [styles.backControl, pressed && styles.backControlPressed]}
+      >
+        <Ionicons name="chevron-back" size={22} color={color.primary.violet} />
+        <ThemedText type="default" style={styles.backLabel}>
+          Back
+        </ThemedText>
+      </Pressable>
+    </View>
+  );
+}
 
 export default function WorkloadScreen() {
   const { session } = useSession();
@@ -61,6 +107,7 @@ export default function WorkloadScreen() {
 
   return (
     <Screen style={styles.screen}>
+      <BackRow />
       <ThemedText type="default" style={styles.title}>
         Workload
       </ThemedText>
@@ -84,7 +131,7 @@ export default function WorkloadScreen() {
           ) : (
             <>
               <LevelSummary data={data} />
-              {data.factors.length > 0 && <FactorsSection factors={data.factors} />}
+              <FactorsSection factors={data.factors} />
               {data.recommendations.length > 0 && (
                 <RecommendationsSection recommendations={data.recommendations} />
               )}
@@ -112,6 +159,9 @@ function LevelSummary({ data }: { data: WorkloadCurrentResponse }) {
           /100
         </ThemedText>
       </ThemedText>
+      <ThemedText type="default" style={styles.summarySentence}>
+        {LEVEL_SUMMARY_TEXT[data.level]}
+      </ThemedText>
 
       {data.gate_applied && (
         <Banner
@@ -134,34 +184,56 @@ function LevelSummary({ data }: { data: WorkloadCurrentResponse }) {
 }
 
 function FactorsSection({ factors }: { factors: WorkloadFactor[] }) {
+  const meaningfulFactors = factors.filter(isMeaningfulFactor);
+
   return (
     <View style={styles.section}>
       <ThemedText type="default" style={styles.sectionHeader}>
         What&apos;s contributing
       </ThemedText>
-      <View style={{ gap: space.sm }}>
-        {factors.map((factor) => (
-          <View key={`${factor.group}-${factor.key}`} style={styles.factorCard}>
-            <View style={styles.factorHeaderRow}>
-              <ThemedText type="default" style={styles.factorGroup}>
-                {factor.group}
+      {meaningfulFactors.length === 0 ? (
+        <ThemedText type="default" style={styles.factorExplanation}>
+          No major workload contributors were detected right now.
+        </ThemedText>
+      ) : (
+        <View style={{ gap: space.sm }}>
+          {meaningfulFactors.map((factor) => (
+            <View key={`${factor.group}-${factor.key}`} style={styles.factorCard}>
+              <View style={styles.factorHeaderRow}>
+                <ThemedText type="default" style={styles.factorGroup}>
+                  {factor.group}
+                </ThemedText>
+                {factor.is_strong && (
+                  <View style={styles.strongBadge}>
+                    <ThemedText type="default" style={styles.strongBadgeText}>
+                      Strong signal
+                    </ThemedText>
+                  </View>
+                )}
+              </View>
+              <ThemedText type="default" style={styles.factorExplanation}>
+                {factor.explanation}
               </ThemedText>
-              {factor.is_strong && (
-                <View style={styles.strongBadge}>
-                  <ThemedText type="default" style={styles.strongBadgeText}>
-                    Strong
-                  </ThemedText>
-                </View>
-              )}
             </View>
-            <ThemedText type="default" style={styles.factorExplanation}>
-              {factor.explanation}
-            </ThemedText>
-          </View>
-        ))}
-      </View>
+          ))}
+        </View>
+      )}
     </View>
   );
+}
+
+/** Navigation target only — never reads `proposed_change` and never
+ * triggers a mutation. `StudyBlock` opens the existing Planner tab so the
+ * user schedules their own slot; a non-StudyBlock recommendation tied to
+ * exactly one task opens that task's existing detail route. Zero or
+ * multiple `relevant_task_ids` has no unambiguous single target, so the
+ * card stays display-only. */
+function getRecommendationHref(recommendation: WorkloadRecommendation): Href | null {
+  if (recommendation.type === 'StudyBlock') return '/planner' as Href;
+  if (recommendation.relevant_task_ids.length === 1) {
+    return `/tasks/${recommendation.relevant_task_ids[0]}` as Href;
+  }
+  return null;
 }
 
 function RecommendationsSection({ recommendations }: { recommendations: WorkloadRecommendation[] }) {
@@ -171,16 +243,49 @@ function RecommendationsSection({ recommendations }: { recommendations: Workload
         Suggestions
       </ThemedText>
       <View style={{ gap: space.sm }}>
-        {recommendations.map((recommendation, index) => (
-          <View key={`${recommendation.type}-${index}`} style={styles.recommendationCard}>
-            <ThemedText type="default" style={styles.recommendationTitle}>
-              {recommendation.title}
-            </ThemedText>
-            <ThemedText type="default" style={styles.factorExplanation}>
-              {recommendation.explanation}
-            </ThemedText>
-          </View>
-        ))}
+        {recommendations.map((recommendation, index) => {
+          const href = getRecommendationHref(recommendation);
+          const content = (
+            <>
+              <View style={styles.recommendationHeaderRow}>
+                <ThemedText type="default" style={styles.recommendationTitle}>
+                  {recommendation.title}
+                </ThemedText>
+                {href && (
+                  <ThemedText type="default" style={styles.recommendationChevron}>
+                    ›
+                  </ThemedText>
+                )}
+              </View>
+              <ThemedText type="default" style={styles.factorExplanation}>
+                {recommendation.explanation}
+              </ThemedText>
+            </>
+          );
+
+          if (!href) {
+            return (
+              <View key={`${recommendation.type}-${index}`} style={styles.recommendationCard}>
+                {content}
+              </View>
+            );
+          }
+
+          return (
+            <Pressable
+              key={`${recommendation.type}-${index}`}
+              accessibilityRole="button"
+              accessibilityLabel={recommendation.title}
+              onPress={() => router.push(href)}
+              style={({ pressed }) => [
+                styles.recommendationCard,
+                pressed && styles.recommendationCardPressed,
+              ]}
+            >
+              {content}
+            </Pressable>
+          );
+        })}
       </View>
     </View>
   );
@@ -189,6 +294,27 @@ function RecommendationsSection({ recommendations }: { recommendations: Workload
 const styles = StyleSheet.create({
   screen: {
     position: 'relative',
+  },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+  },
+  backControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    minHeight: touchTarget.min,
+    minWidth: touchTarget.min,
+    paddingHorizontal: space.sm,
+    marginLeft: -space.sm,
+  },
+  backControlPressed: {
+    opacity: 0.6,
+  },
+  backLabel: {
+    color: color.primary.violet,
+    fontSize: typeTokens.body.fontSize,
+    fontWeight: '600',
   },
   title: {
     fontSize: typeTokens.display.fontSize,
@@ -229,6 +355,11 @@ const styles = StyleSheet.create({
   scoreMax: {
     fontSize: typeTokens.body.fontSize,
     fontWeight: '400',
+    color: color.text.secondary,
+  },
+  summarySentence: {
+    fontSize: typeTokens.body.fontSize,
+    lineHeight: typeTokens.body.lineHeight,
     color: color.text.secondary,
   },
   section: {
@@ -278,10 +409,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.card,
     padding: space.md,
   },
+  recommendationCardPressed: {
+    opacity: 0.7,
+  },
+  recommendationHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   recommendationTitle: {
     fontSize: typeTokens.subheading.fontSize,
     lineHeight: typeTokens.subheading.lineHeight,
     fontWeight: '600',
     color: color.text.primary,
+  },
+  recommendationChevron: {
+    fontSize: typeTokens.subheading.fontSize,
+    color: color.text.secondary,
   },
 });

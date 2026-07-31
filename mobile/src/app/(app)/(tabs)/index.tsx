@@ -1,6 +1,6 @@
 import { router, useFocusEffect, type Href } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { getTasksToday } from '@/api/tasks';
 import { Banner } from '@/components/banner';
@@ -10,7 +10,7 @@ import { Screen } from '@/components/screen';
 import { TaskRow } from '@/components/task-row';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
-import { color, space, type as typeTokens } from '@/design-system/tokens';
+import { color, radius, space, type as typeTokens } from '@/design-system/tokens';
 import type { Task, TaskTodayView } from '@/types/api';
 
 export default function TodayScreen() {
@@ -58,6 +58,20 @@ export default function TodayScreen() {
       <ThemedText type="default" style={styles.date}>
         {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
       </ThemedText>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Check your workload"
+        onPress={() => router.push('/workload' as Href)}
+        style={({ pressed }) => [styles.workloadEntry, pressed && styles.workloadEntryPressed]}
+      >
+        <ThemedText type="default" style={styles.workloadEntryText}>
+          Check your workload
+        </ThemedText>
+        <ThemedText type="default" style={styles.workloadEntryChevron}>
+          ›
+        </ThemedText>
+      </Pressable>
 
       {isLoading && <ActivityIndicator color={color.primary.violet} />}
       {!isLoading && loadError && <Banner variant="error" message={loadError} />}
@@ -122,6 +136,27 @@ const styles = StyleSheet.create({
     fontSize: typeTokens.caption.fontSize,
     color: color.text.secondary,
     textTransform: 'uppercase',
+  },
+  workloadEntry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: color.background.card,
+    borderRadius: radius.card,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+  },
+  workloadEntryPressed: {
+    opacity: 0.7,
+  },
+  workloadEntryText: {
+    fontSize: typeTokens.body.fontSize,
+    fontWeight: '600',
+    color: color.text.primary,
+  },
+  workloadEntryChevron: {
+    fontSize: typeTokens.subheading.fontSize,
+    color: color.text.secondary,
   },
   emptyScroll: {
     flexGrow: 1,
