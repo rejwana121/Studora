@@ -41,6 +41,7 @@ from app.services.workload.signals import (
     extract_backlog_completion_study_signals,
     extract_deadline_importance_feasibility_signals,
     extract_signals,
+    extract_signals_with_context,
 )
 
 NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
@@ -1127,3 +1128,130 @@ def test_extract_signals_query_count_flat_as_rows_increase(engine):
             counts.append(_count_select_statements(engine, _run))
 
     assert counts == [5, 5]
+
+
+# =====================================================================
+# Batch 3: build_task_context / extract_signals_with_context
+# =====================================================================
+
+
+def test_build_task_context_scopes_to_relevant_task_ids_only(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        due_soon = _task(user_id, NOW + timedelta(hours=10), estimate_hours=3.0)
+        far_future = _task(user_id, NOW + timedelta(days=30))
+        session.add(due_soon)
+        session.add(far_future)
+        session.commit()
+
+        signals, task_context = extract_signals_with_context(session, user_id, now=NOW)
+
+    context_ids = {t.id for t in task_context}
+    assert due_soon.id in context_ids
+    assert far_future.id not in context_ids
+    assert context_ids == set(signals.relevant_task_ids)
+
+
+def test_build_task_context_scheduled_and_unscheduled_hours_match_signals(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        task = _task(user_id, NOW + timedelta(hours=10), estimate_hours=5.0)
+        session.add(task)
+        session.flush()
+        session.add(_block(user_id, task.id, NOW + timedelta(hours=1), NOW + timedelta(hours=3)))
+        session.commit()
+
+        signals, task_context = extract_signals_with_context(session, user_id, now=NOW)
+
+    ctx = next(t for t in task_context if t.id == task.id)
+    assert ctx.scheduled_hours == 2.0
+    assert ctx.unscheduled_hours == 3.0
+    assert ctx.unscheduled_hours == signals.unscheduled_estimate_hours
+
+
+def test_build_task_context_missing_estimate_has_zero_unscheduled_hours(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        task = _task(user_id, NOW + timedelta(hours=10), estimate_hours=None)
+        session.add(task)
+        session.commit()
+
+        _signals, task_context = extract_signals_with_context(session, user_id, now=NOW)
+
+    ctx = next(t for t in task_context if t.id == task.id)
+    assert ctx.had_missing_estimate is True
+    assert ctx.unscheduled_hours == 0.0
+
+
+def test_build_task_context_flags_overdue_and_overdue_backlog(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        just_overdue = _task(user_id, NOW - timedelta(hours=1))
+        backlog = _task(user_id, NOW - timedelta(hours=25))
+        session.add(just_overdue)
+        session.add(backlog)
+        session.commit()
+
+        _signals, task_context = extract_signals_with_context(session, user_id, now=NOW)
+
+    just_overdue_ctx = next(t for t in task_context if t.id == just_overdue.id)
+    backlog_ctx = next(t for t in task_context if t.id == backlog.id)
+    assert just_overdue_ctx.is_overdue is True
+    assert just_overdue_ctx.is_overdue_backlog is False
+    assert backlog_ctx.is_overdue is True
+    assert backlog_ctx.is_overdue_backlog is True
+
+
+def test_build_task_context_ownership_isolation(engine):
+    owner_a = uuid.uuid4()
+    owner_b = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(owner_a, NOW + timedelta(hours=10)))
+        session.add(_task(owner_b, NOW + timedelta(hours=10)))
+        session.commit()
+
+        _signals_a, task_context_a = extract_signals_with_context(session, owner_a, now=NOW)
+
+    assert len(task_context_a) == 1
+
+
+def test_extract_signals_with_context_matches_extract_signals(engine):
+    """extract_signals() itself must be byte-identical whether called
+    directly or via extract_signals_with_context()'s shared internals —
+    the Batch 3 refactor must not change its observable behavior."""
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=10), estimate_hours=2.0))
+        session.commit()
+
+        direct = extract_signals(session, user_id, now=NOW)
+        via_context, _task_context = extract_signals_with_context(session, user_id, now=NOW)
+
+    assert direct == via_context
+
+
+def test_extract_signals_with_context_query_count_bounded_5_without_break_candidates(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=5)))
+        session.commit()
+
+        def _run():
+            extract_signals_with_context(session, user_id, now=NOW)
+
+        count = _count_select_statements(engine, _run)
+    assert count == 5
+
+
+def test_extract_signals_with_context_query_count_bounded_6_with_break_candidates(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        s = _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5400)
+        session.add(s)
+        session.commit()
+
+        def _run():
+            extract_signals_with_context(session, user_id, now=NOW)
+
+        count = _count_select_statements(engine, _run)
+    assert count == 6

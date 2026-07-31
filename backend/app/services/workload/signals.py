@@ -21,7 +21,7 @@ from app.models.study_session import StudySession
 from app.models.study_session_break import StudySessionBreak
 from app.models.subtask import Subtask
 from app.models.task import Task
-from app.schemas.workload import Signals
+from app.schemas.workload import Signals, TaskContext
 from app.services.workload.constants import (
     ASSESSMENT_TYPES,
     COMPLETION_DELAY_LOOKBACK_DAYS,
@@ -373,17 +373,15 @@ def extract_backlog_completion_study_signals(
     }
 
 
-def extract_signals(session: Session, user_id: uuid.UUID, now: datetime | None = None) -> Signals:
-    """The complete per-user extraction orchestrator — combines Batch 2A
-    (Deadline/Importance/Feasibility) and Batch 2B
-    (Backlog/Completion/Study) into one `Signals`, ready for
-    `app.services.workload.engine.evaluate()`. `active_tasks` is fetched
-    exactly once and reused by both halves; total query count is bounded
-    at 6 SELECTs when missed-break candidates exist, 5 when they don't,
-    flat regardless of row counts (see `extract_backlog_completion_study_signals`'s
-    own docstring for the full budget breakdown). Accepts an injectable
-    `now` so tests never depend on wall-clock time.
-    """
+def _extract_all(
+    session: Session, user_id: uuid.UUID, now: datetime | None
+) -> tuple[datetime, list[Task], list[Task], dict[uuid.UUID, list[StudyBlock]], Signals]:
+    """Shared internals for `extract_signals` and
+    `extract_signals_with_context` (Batch 3) — exactly the same 5/6
+    bounded queries either way. Returns `reference_now` alongside the raw
+    rows so both public functions use the literal same instant (never a
+    second `datetime.now(UTC)` call that could theoretically drift from
+    the first one)."""
     reference_now = _as_utc_instant(now) if now is not None else datetime.now(UTC)
     active_tasks = _fetch_active_tasks(session, user_id)  # query 1
     due_soon_72h = _due_within(active_tasks, DUE_SOON_WINDOW, reference_now)
@@ -398,4 +396,104 @@ def extract_signals(session: Session, user_id: uuid.UUID, now: datetime | None =
         session, user_id, active_tasks, now=reference_now
     )  # queries 3-6, or 3-7 when break candidates exist
 
-    return Signals(**deadline_importance_feasibility, **backlog_completion_study)
+    signals = Signals(**deadline_importance_feasibility, **backlog_completion_study)
+    return reference_now, active_tasks, due_soon_72h, blocks_by_task, signals
+
+
+def extract_signals(session: Session, user_id: uuid.UUID, now: datetime | None = None) -> Signals:
+    """The complete per-user extraction orchestrator — combines Batch 2A
+    (Deadline/Importance/Feasibility) and Batch 2B
+    (Backlog/Completion/Study) into one `Signals`, ready for
+    `app.services.workload.engine.evaluate()`. `active_tasks` is fetched
+    exactly once and reused by both halves; total query count is bounded
+    at 6 SELECTs when missed-break candidates exist, 5 when they don't,
+    flat regardless of row counts (see `extract_backlog_completion_study_signals`'s
+    own docstring for the full budget breakdown). Accepts an injectable
+    `now` so tests never depend on wall-clock time.
+
+    Contract unchanged since Batch 2B (Checkpoint — approved: Batch 3
+    must not modify this). Internally routes through `_extract_all`
+    (Batch 3 refactor) purely so `extract_signals_with_context` can reuse
+    the exact same fetch — this function's own signature, return type,
+    and observable behavior are identical to before."""
+    *_, signals = _extract_all(session, user_id, now)
+    return signals
+
+
+def build_task_context(
+    active_tasks: list[Task],
+    due_soon_72h: list[Task],
+    blocks_by_task: dict[uuid.UUID, list[StudyBlock]],
+    relevant_task_ids: list[uuid.UUID],
+    now: datetime,
+) -> list[TaskContext]:
+    """Batch 3 — pure (no DB) per-task context for
+    `app.services.workload.recommendations.generate_recommendations`.
+    Built entirely from data `extract_signals` already fetched — zero
+    additional queries. Scoped to exactly `relevant_task_ids` (already
+    ownership-safe, since it was derived only from this user's own
+    `active_tasks`), in `active_tasks`'s own stable `(deadline, id)`
+    order.
+
+    `scheduled_hours` reuses `_clipped_scheduled_hours` — the identical
+    per-task feasibility computation `Signals.unscheduled_estimate_hours`
+    already sums, never a second implementation. Computed for every
+    due-soon task regardless of whether it has an estimate (StudyBlock's
+    trigger — "no linked study block before deadline" — doesn't require
+    one); `unscheduled_hours` is only ever non-zero when an estimate is
+    present, matching `Signals`' own missing-estimate handling.
+    """
+    due_soon_ids = {t.id for t in due_soon_72h}
+    relevant_ids = set(relevant_task_ids)
+    backlog_cutoff = now - timedelta(hours=OVERDUE_BACKLOG_HOURS)
+
+    contexts: list[TaskContext] = []
+    for task in active_tasks:
+        if task.id not in relevant_ids:
+            continue
+        deadline = _as_utc_instant(task.deadline)
+        is_due_soon = task.id in due_soon_ids
+        had_missing_estimate = task.estimate_hours is None
+
+        scheduled_hours = 0.0
+        unscheduled_hours = 0.0
+        if is_due_soon:
+            scheduled_hours = _clipped_scheduled_hours(task, blocks_by_task.get(task.id, []), now)
+            if not had_missing_estimate:
+                unscheduled_hours = max(0.0, task.estimate_hours - scheduled_hours)
+
+        contexts.append(
+            TaskContext(
+                id=task.id,
+                title=task.title,
+                type=task.type,
+                priority=task.priority,
+                deadline=deadline,
+                estimate_hours=task.estimate_hours,
+                is_overdue=deadline < now,
+                is_overdue_backlog=deadline < backlog_cutoff,
+                is_due_soon_72h=is_due_soon,
+                scheduled_hours=scheduled_hours,
+                unscheduled_hours=unscheduled_hours,
+                had_missing_estimate=had_missing_estimate,
+            )
+        )
+    return contexts
+
+
+def extract_signals_with_context(
+    session: Session, user_id: uuid.UUID, now: datetime | None = None
+) -> tuple[Signals, list[TaskContext]]:
+    """Batch 3 — additive wrapper for the recommendation generator.
+    Runs the exact same internals `extract_signals` runs (via
+    `_extract_all`, still 5/6 bounded queries, unchanged), then builds
+    `TaskContext` from the already-fetched rows — never a new query.
+    `extract_signals` itself is untouched and remains the contract every
+    Batch 1/2 caller/test already depends on."""
+    reference_now, active_tasks, due_soon_72h, blocks_by_task, signals = _extract_all(
+        session, user_id, now
+    )
+    task_context = build_task_context(
+        active_tasks, due_soon_72h, blocks_by_task, signals.relevant_task_ids, reference_now
+    )
+    return signals, task_context

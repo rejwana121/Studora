@@ -12,11 +12,20 @@ engine typed input/output.
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.task import TaskPriority, TaskType
+
 WorkloadLevel = Literal["Low", "Moderate", "High", "Critical"]
+
+# Batch 3 — exact 6 types from docs/phase1/11-workload-engine-spec.md §11.5
+# (Checkpoint — approved: "Priority, Split, Reschedule, StudyBlock, Break,
+# Recovery", none merged/omitted). "StudyBlock" is the approved wire-safe
+# token for the spec's own "Study block" row (PascalCase, no space — same
+# convention as every other enum-like field in this codebase).
+RecommendationType = Literal["Priority", "Split", "Reschedule", "StudyBlock", "Break", "Recovery"]
 
 
 class Signals(BaseModel):
@@ -81,3 +90,58 @@ class EvaluationResult(BaseModel):
     relevant_task_ids: list[uuid.UUID]
     evaluated_at: datetime
     engine_version: str
+
+
+class TaskContext(BaseModel):
+    """Batch 3 — per-task detail the recommendation generator needs but
+    the scored `Signals` deliberately never carries (titles/deadlines/
+    estimates aren't scoring inputs). Built by
+    `app.services.workload.signals.build_task_context` from data already
+    fetched for `Signals` itself — zero additional queries. Scoped to
+    exactly `Signals.relevant_task_ids`, which is already ownership-safe
+    (derived only from the authenticated user's own active tasks), so
+    every `TaskContext` is ownership-safe by construction.
+
+    `is_overdue`/`is_overdue_backlog`/`is_due_soon_72h` are precomputed
+    booleans (not raw deadline/now values) specifically so
+    `app.services.workload.recommendations.generate_recommendations` can
+    stay genuinely clock-free — it never compares a deadline to "now"
+    itself, only reads these flags. `scheduled_hours`/`unscheduled_hours`
+    reuse `signals._clipped_scheduled_hours` — the exact same per-task
+    feasibility computation `Signals.unscheduled_estimate_hours` sums,
+    never a second implementation of that clipping/merging logic."""
+
+    id: uuid.UUID
+    title: str
+    type: TaskType
+    priority: TaskPriority
+    deadline: datetime
+    estimate_hours: float | None
+    is_overdue: bool
+    is_overdue_backlog: bool
+    is_due_soon_72h: bool
+    scheduled_hours: float
+    unscheduled_hours: float
+    had_missing_estimate: bool
+
+
+class Recommendation(BaseModel):
+    """Batch 3 — one deterministic, read-only suggestion
+    (docs/phase1/11-workload-engine-spec.md §11.5). `proposed_change` is
+    preview data only (requirement 2 of the Batch 3 approval) — nothing
+    in this codebase ever applies it automatically; a Task/StudyBlock is
+    only ever created/edited/deleted through its own existing, explicit
+    API route. `rank` is `constants.RECOMMENDATION_TYPE_RANK[type]`,
+    carried on the instance so a caller can sort/truncate without
+    re-deriving it. `recommendation_engine_version` is independent of
+    `EvaluationResult.engine_version` (Checkpoint — approved: separate
+    versioning, since recommendation heuristics and scoring/gate logic are
+    independently tunable concerns)."""
+
+    type: RecommendationType
+    title: str
+    explanation: str
+    relevant_task_ids: list[uuid.UUID]
+    proposed_change: dict[str, Any] | None
+    rank: int
+    recommendation_engine_version: str

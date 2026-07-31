@@ -32,6 +32,60 @@ COMPLETION_DELAY_LOOKBACK_DAYS = 14
 WORKLOAD_LONG_SESSION_SECONDS = 5400
 MISSED_BREAK_LOOKBACK_DAYS = 7
 
+# Strong-signal thresholds (spec §11.2), named so app.services.workload.
+# recommendations can reuse the exact same crossing points `engine._is_strong`
+# uses (Recovery's trigger IS overdue_backlog_count's strong threshold) --
+# one source of truth, not a second hardcoded copy. Moving these out of
+# `_is_strong`'s inline literals is a Checkpoint-approved, behavior-identical
+# refactor (Batch 3) -- the scoring/gate logic itself is unchanged.
+STRONG_OVERDUE_COUNT = 1
+STRONG_CLUSTER_72H = 3
+STRONG_HIGH_PRIORITY_DUE_SOON_COUNT = 2
+STRONG_OVERDUE_BACKLOG_COUNT = 3
+STRONG_RECENT_COMPLETION_DELAY_HOURS = 24
+
+# --- Batch 3: recommendation generator configuration ---
+
+# Independent from ENGINE_VERSION (spec §11.7's reasoning, generalized):
+# recommendation-selection heuristics are a separate tunable concern from
+# the score/gate/band logic, so retuning one must never falsely imply the
+# other changed.
+RECOMMENDATION_ENGINE_VERSION = "0.1.0"
+
+MAX_RECOMMENDATIONS = 5
+
+# Rank order for the final response list (Checkpoint -- approved
+# correction): lower = shown first. Break and Recovery rank above the
+# scheduling-advice types so an immediate break need or a persistent
+# overdue backlog is never truncated behind lower-confidence Split/
+# Reschedule suggestions when MAX_RECOMMENDATIONS caps the list.
+RECOMMENDATION_TYPE_RANK: dict[str, int] = {
+    "Break": 1,
+    "Recovery": 2,
+    "Priority": 3,
+    "StudyBlock": 4,
+    "Split": 5,
+    "Reschedule": 6,
+}
+
+SPLIT_MIN_UNSCHEDULED_HOURS = 3.0
+SPLIT_CHUNK_HOURS = 2.0
+
+MAX_PRIORITY_RECOMMENDATIONS = 2
+RECOVERY_MAX_TASKS = 2
+
+RESCHEDULE_COLLISION_WINDOW_HOURS = 24
+
+BREAK_SUGGESTED_MINUTES = 10
+
+# StudyBlock's proposed_change is preview-only (Checkpoint -- approved
+# correction): a specific free timeslot is never fabricated (the 5/6-query
+# context has no visibility into the user's whole Planner calendar), only
+# a suggested duration + "schedule before this deadline" + a flag telling
+# the client to open the Planner for the user's own slot choice.
+STUDY_BLOCK_DEFAULT_DURATION_HOURS = 2.0
+STUDY_BLOCK_MAX_SUGGESTED_HOURS = 4.0
+
 # Signal -> spec §11.1 group, used to label factors in the response.
 GROUP_OF: dict[str, str] = {
     "overdue_count": "Deadline",

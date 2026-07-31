@@ -14,6 +14,11 @@ from app.services.workload.constants import (
     ENGINE_VERSION,
     GROUP_OF,
     NORMALIZATION_CAPS,
+    STRONG_CLUSTER_72H,
+    STRONG_HIGH_PRIORITY_DUE_SOON_COUNT,
+    STRONG_OVERDUE_BACKLOG_COUNT,
+    STRONG_OVERDUE_COUNT,
+    STRONG_RECENT_COMPLETION_DELAY_HOURS,
     WEIGHTS,
 )
 
@@ -40,21 +45,27 @@ def _is_strong(key: str, value: bool | int | float | None) -> bool:
     """Strong-signal thresholds (spec §11.2) — an explicit, documented
     crossing point per signal, independent of that signal's normalization
     cap. Only the seven signals spec §11.2 names as strong-signal-eligible
-    can ever be strong; every other signal always returns False here."""
+    can ever be strong; every other signal always returns False here.
+
+    Thresholds are named constants in `constants.py` (Batch 3, behavior-
+    identical refactor) rather than inline literals, so
+    `app.services.workload.recommendations` can reuse the exact same
+    crossing points (e.g. Recovery's trigger IS overdue_backlog_count's
+    strong threshold) instead of hardcoding a second copy."""
     if key == "overdue_count":
-        return value >= 1
+        return value >= STRONG_OVERDUE_COUNT
     if key == "cluster_72h":
-        return value >= 3
+        return value >= STRONG_CLUSTER_72H
     if key == "unscheduled_estimate_hours":
         return value > 0
     if key == "high_priority_due_soon_count":
-        return value >= 2
+        return value >= STRONG_HIGH_PRIORITY_DUE_SOON_COUNT
     if key == "overdue_backlog_count":
-        return value >= 3
+        return value >= STRONG_OVERDUE_BACKLOG_COUNT
     if key == "long_continuous_session_flag":
         return value is True
     if key == "recent_completion_delay_avg":
-        return value is not None and value > 24
+        return value is not None and value > STRONG_RECENT_COMPLETION_DELAY_HOURS
     return False
 
 
