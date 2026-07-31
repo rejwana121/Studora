@@ -304,3 +304,61 @@ export interface SessionBreakActionResult {
   session: StudySessionRead;
   break_event: StudySessionBreakRead;
 }
+
+/** Mirrors app/schemas/workload.py / app/schemas/workload_api.py
+ * (backend/docs/phase1/11-workload-engine-spec.md §11.4-11.5, as amended by
+ * Checkpoint-approved corrections through Batch 4 — the doc's own §11.4
+ * JSON sample predates those and is not literally accurate). */
+export type WorkloadLevel = 'Low' | 'Moderate' | 'High' | 'Critical';
+
+export type WorkloadRecommendationType =
+  | 'Priority'
+  | 'Split'
+  | 'Reschedule'
+  | 'StudyBlock'
+  | 'Break'
+  | 'Recovery';
+
+export interface WorkloadFactor {
+  group: string;
+  key: string;
+  value: boolean | number | null;
+  is_strong: boolean;
+  explanation: string;
+}
+
+/** `proposed_change` is preview data only — GET /workload/current has no
+ * corresponding apply/accept endpoint; never sent back to the server. */
+export interface WorkloadRecommendation {
+  type: WorkloadRecommendationType;
+  title: string;
+  explanation: string;
+  relevant_task_ids: string[];
+  proposed_change: Record<string, unknown> | null;
+  rank: number;
+  recommendation_engine_version: string;
+}
+
+/** GET /workload/current. `raw_score`/`ungated_level` are the pre-gate
+ * result; `level` is the sole authoritative field after the §11.2 safety
+ * gate — check `gate_applied` before displaying `raw_score` next to
+ * `level`, and surface `gate_explanation` when true. `insufficient_data`
+ * is true only when there is no evidence at all (no active tasks, no
+ * recently completed tasks, no recent/current study session); when true,
+ * `recommendations` is always []. */
+export interface WorkloadCurrentResponse {
+  raw_score: number;
+  ungated_level: WorkloadLevel;
+  level: WorkloadLevel;
+  gate_applied: boolean;
+  gate_explanation: string | null;
+  strong_signal_count: number;
+  confidence: 'full' | 'reduced';
+  factors: WorkloadFactor[];
+  relevant_task_ids: string[];
+  evaluated_at: string;
+  engine_version: string;
+  insufficient_data: boolean;
+  recommendations: WorkloadRecommendation[];
+  recommendation_engine_version: string;
+}
