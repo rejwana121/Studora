@@ -7,6 +7,7 @@ from app.api.v1.study_session import router as study_session_router
 from app.api.v1.subject import router as subject_router
 from app.api.v1.subtask import router as subtask_router
 from app.api.v1.task import router as task_router
+from app.api.v1.workload import router as workload_router
 
 router = APIRouter()
 router.include_router(profile_router)
@@ -16,3 +17,4 @@ router.include_router(subtask_router)
 router.include_router(planner_router)
 router.include_router(study_block_router)
 router.include_router(study_session_router)
+router.include_router(workload_router)

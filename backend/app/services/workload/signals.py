@@ -21,7 +21,7 @@ from app.models.study_session import StudySession
 from app.models.study_session_break import StudySessionBreak
 from app.models.subtask import Subtask
 from app.models.task import Task
-from app.schemas.workload import Signals, TaskContext
+from app.schemas.workload import Signals, TaskContext, WorkloadSnapshotMetadata
 from app.services.workload.constants import (
     ASSESSMENT_TYPES,
     COMPLETION_DELAY_LOOKBACK_DAYS,
@@ -208,34 +208,86 @@ def extract_deadline_importance_feasibility_signals(
     )
 
 
-def extract_backlog_completion_study_signals(
+def _fetch_subtasks(session: Session, user_id: uuid.UUID) -> list[Subtask]:
+    """Ownership filtered directly on BOTH Subtask.user_id and
+    Task.user_id (defense in depth, not relying on the join alone),
+    scoped to the user's active tasks only."""
+    return list(
+        session.exec(
+            select(Subtask)
+            .join(Task, Subtask.task_id == Task.id)
+            .where(
+                Subtask.user_id == user_id,
+                Task.user_id == user_id,
+                Task.status.in_(_ACTIVE_STATUSES),
+            )
+        )
+    )
+
+
+def _fetch_completed_tasks(
+    session: Session, user_id: uuid.UUID, window_start: datetime, now: datetime
+) -> list[Task]:
+    return list(
+        session.exec(
+            select(Task).where(
+                Task.user_id == user_id,
+                Task.status == "Completed",
+                Task.completed_at >= window_start,
+                Task.completed_at <= now,
+            )
+        )
+    )
+
+
+def _fetch_recent_sessions(
+    session: Session, user_id: uuid.UUID, window_start: datetime
+) -> list[StudySession]:
+    """One query serving multiple signals: the current Active/Paused
+    session (at most one row, DB partial unique index) plus every
+    Finished session started within the rolling lookback window,
+    regardless of duration (Batch 4 — broadened; the >=90-minute
+    threshold used by missed_break_count is applied in memory by
+    `_compute_and_fetch_backlog_completion_study`, not in this WHERE
+    clause) — so this same single SELECT can also answer
+    `WorkloadSnapshotMetadata.recent_study_session_count` without a
+    second query. Ownership filtered directly on StudySession.user_id."""
+    return list(
+        session.exec(
+            select(StudySession).where(
+                StudySession.user_id == user_id,
+                or_(
+                    StudySession.status.in_(_UNFINISHED_SESSION_STATUSES),
+                    and_(
+                        StudySession.status == "Finished",
+                        StudySession.started_at >= window_start,
+                    ),
+                ),
+            )
+        )
+    )
+
+
+def _compute_and_fetch_backlog_completion_study(
     session: Session,
     user_id: uuid.UUID,
     active_tasks: list[Task],
-    now: datetime | None = None,
+    subtasks: list[Subtask],
+    completed_tasks: list[Task],
+    sessions: list[StudySession],
+    now: datetime,
 ) -> dict:
-    """Batch 2B — Backlog, Completion, and Study groups (spec §11.1).
-    `active_tasks` must already be fetched by the caller (`extract_signals`
-    reuses the same fetch `_compute_deadline_importance_feasibility` used
-    — never a second query for the same rows), and is used directly for
-    `overdue_backlog_count`/`reschedule_count_lifetime` at zero extra
-    query cost.
-
-    Query budget: 3 unconditional (Subtask join, Completed tasks, one
-    merged StudySession fetch serving both long_continuous_session_flag
-    and missed_break_count candidates) + 1 conditional (TakeBreak events
-    — only run when at least one long Finished-session candidate exists).
-    Combined with the 2 queries `active_tasks`'s own caller already
-    spent, the whole-engine total is bounded at 6 SELECTs when break
-    candidates exist, 5 when they don't — flat regardless of row counts,
-    no per-row queries.
-    """
-    reference_now = _as_utc_instant(now) if now is not None else datetime.now(UTC)
-
+    """Pure computation over already-fetched rows, plus exactly one
+    conditional query (TakeBreak events, only when at least one long
+    Finished-session candidate exists) — behavior-identical to the
+    pre-Batch-4 monolithic `extract_backlog_completion_study_signals`,
+    just split so `extract_workload_snapshot` (Batch 4) can reuse the
+    same fetched `completed_tasks`/`sessions` rows for
+    `WorkloadSnapshotMetadata` without a second query."""
     # --- Backlog: overdue_backlog_count (reuses active_tasks, 0 queries) ---
     # Strictly MORE than OVERDUE_BACKLOG_HOURS overdue — a task exactly on
     # the boundary is not counted (deadline < cutoff, not <=).
-    backlog_cutoff = reference_now - timedelta(hours=OVERDUE_BACKLOG_HOURS)
+    backlog_cutoff = now - timedelta(hours=OVERDUE_BACKLOG_HOURS)
     overdue_backlog_count = sum(
         1 for t in active_tasks if _as_utc_instant(t.deadline) < backlog_cutoff
     )
@@ -249,37 +301,12 @@ def extract_backlog_completion_study_signals(
     # task)" (app.services.workload.engine._EXPLANATION_TEMPLATES).
     reschedule_count_lifetime = sum(t.reschedule_count for t in active_tasks)
 
-    # --- Backlog: incomplete_subtask_ratio (1 query) ---
-    # Ownership filtered directly on BOTH Subtask.user_id and
-    # Task.user_id (defense in depth, not relying on the join alone),
-    # scoped to the user's active tasks only.
-    subtasks = list(
-        session.exec(
-            select(Subtask)
-            .join(Task, Subtask.task_id == Task.id)
-            .where(
-                Subtask.user_id == user_id,
-                Task.user_id == user_id,
-                Task.status.in_(_ACTIVE_STATUSES),
-            )
-        )
-    )
+    # --- Backlog: incomplete_subtask_ratio ---
     total_subtasks = len(subtasks)
     incomplete_subtasks = sum(1 for s in subtasks if not s.is_complete)
     incomplete_subtask_ratio = (incomplete_subtasks / total_subtasks) if total_subtasks else 0.0
 
-    # --- Completion: recent_completion_delay_avg (1 query) ---
-    completion_window_start = reference_now - timedelta(days=COMPLETION_DELAY_LOOKBACK_DAYS)
-    completed_tasks = list(
-        session.exec(
-            select(Task).where(
-                Task.user_id == user_id,
-                Task.status == "Completed",
-                Task.completed_at >= completion_window_start,
-                Task.completed_at <= reference_now,
-            )
-        )
-    )
+    # --- Completion: recent_completion_delay_avg ---
     if completed_tasks:
         # Each delay clamped to >= 0 first — an early/on-time completion
         # contributes exactly 0, never a negative value that would mask
@@ -296,55 +323,36 @@ def extract_backlog_completion_study_signals(
     else:
         recent_completion_delay_avg = None
 
-    # --- Study: long_continuous_session_flag + missed_break_count candidates (1 query) ---
-    # One query serves both signals: the current Active/Paused session
-    # (at most one row, DB partial unique index) for
-    # long_continuous_session_flag, and recent long Finished sessions for
-    # missed_break_count — merged via OR so this stays a single SELECT
-    # rather than two (keeps the whole-orchestrator budget at 6/5, see
-    # `extract_signals`'s docstring).
-    #
+    # --- Study: long_continuous_session_flag + missed_break_count ---
     # Only a currently ACTIVE session's OPEN segment can prove
     # continuity — active_duration_seconds is an aggregate across
     # possibly many pause/resume cycles and is never used for this flag
     # (a Paused session's active_segment_started_at is always None by the
     # model's own CHECK constraint, so it fails this check trivially
     # without a separate status branch).
-    #
-    # For missed_break_count, only Finished sessions are judged (an
-    # in-progress session hasn't "missed" anything yet);
-    # active_duration_seconds here IS an aggregate, not proof of an
-    # uninterrupted segment — this signal means "a long finished session
-    # with no recorded Take Break", never "a proven continuous session"
-    # (see engine._EXPLANATION_TEMPLATES).
-    missed_break_window_start = reference_now - timedelta(days=MISSED_BREAK_LOOKBACK_DAYS)
-    sessions = list(
-        session.exec(
-            select(StudySession).where(
-                StudySession.user_id == user_id,
-                or_(
-                    StudySession.status.in_(_UNFINISHED_SESSION_STATUSES),
-                    and_(
-                        StudySession.status == "Finished",
-                        StudySession.started_at >= missed_break_window_start,
-                        StudySession.active_duration_seconds >= WORKLOAD_LONG_SESSION_SECONDS,
-                    ),
-                ),
-            )
-        )
-    )
-
     unfinished_session = next(
         (s for s in sessions if s.status in _UNFINISHED_SESSION_STATUSES), None
     )
     long_continuous_session_flag = False
     if unfinished_session is not None and unfinished_session.active_segment_started_at is not None:
         open_segment_seconds = (
-            reference_now - _as_utc_instant(unfinished_session.active_segment_started_at)
+            now - _as_utc_instant(unfinished_session.active_segment_started_at)
         ).total_seconds()
         long_continuous_session_flag = open_segment_seconds >= WORKLOAD_LONG_SESSION_SECONDS
 
-    long_finished_sessions = [s for s in sessions if s.status == "Finished"]
+    # For missed_break_count, only Finished sessions are judged (an
+    # in-progress session hasn't "missed" anything yet); the >=90-minute
+    # threshold is applied here in memory (Batch 4 — `sessions` itself
+    # may now include short Finished sessions too, fetched for
+    # `recent_study_session_count`). active_duration_seconds here IS an
+    # aggregate, not proof of an uninterrupted segment — this signal
+    # means "a long finished session with no recorded Take Break", never
+    # "a proven continuous session" (see engine._EXPLANATION_TEMPLATES).
+    long_finished_sessions = [
+        s
+        for s in sessions
+        if s.status == "Finished" and s.active_duration_seconds >= WORKLOAD_LONG_SESSION_SECONDS
+    ]
     missed_break_count = len(long_finished_sessions)
     if long_finished_sessions:
         candidate_ids = [s.id for s in long_finished_sessions]
@@ -371,6 +379,47 @@ def extract_backlog_completion_study_signals(
         "long_continuous_session_flag": long_continuous_session_flag,
         "missed_break_count": missed_break_count,
     }
+
+
+def extract_backlog_completion_study_signals(
+    session: Session,
+    user_id: uuid.UUID,
+    active_tasks: list[Task],
+    now: datetime | None = None,
+) -> dict:
+    """Batch 2B — Backlog, Completion, and Study groups (spec §11.1).
+    `active_tasks` must already be fetched by the caller (`extract_signals`
+    reuses the same fetch `_compute_deadline_importance_feasibility` used
+    — never a second query for the same rows), and is used directly for
+    `overdue_backlog_count`/`reschedule_count_lifetime` at zero extra
+    query cost.
+
+    Query budget: 3 unconditional (Subtask join, Completed tasks, one
+    merged StudySession fetch serving both long_continuous_session_flag
+    and missed_break_count candidates) + 1 conditional (TakeBreak events
+    — only run when at least one long Finished-session candidate exists).
+    Combined with the 2 queries `active_tasks`'s own caller already
+    spent, the whole-engine total is bounded at 6 SELECTs when break
+    candidates exist, 5 when they don't — flat regardless of row counts,
+    no per-row queries. Return value and observable behavior are
+    unchanged since Batch 2B (Batch 4 only split its internals into
+    fetch helpers + `_compute_and_fetch_backlog_completion_study`, so
+    `extract_workload_snapshot` can reuse the same fetched rows for
+    `WorkloadSnapshotMetadata` — this function's own contract is intact).
+    """
+    reference_now = _as_utc_instant(now) if now is not None else datetime.now(UTC)
+
+    subtasks = _fetch_subtasks(session, user_id)  # query
+    completion_window_start = reference_now - timedelta(days=COMPLETION_DELAY_LOOKBACK_DAYS)
+    completed_tasks = _fetch_completed_tasks(
+        session, user_id, completion_window_start, reference_now
+    )  # query
+    missed_break_window_start = reference_now - timedelta(days=MISSED_BREAK_LOOKBACK_DAYS)
+    sessions = _fetch_recent_sessions(session, user_id, missed_break_window_start)  # query
+
+    return _compute_and_fetch_backlog_completion_study(
+        session, user_id, active_tasks, subtasks, completed_tasks, sessions, reference_now
+    )  # + 1 conditional query (TakeBreak)
 
 
 def _extract_all(
@@ -497,3 +546,59 @@ def extract_signals_with_context(
         active_tasks, due_soon_72h, blocks_by_task, signals.relevant_task_ids, reference_now
     )
     return signals, task_context
+
+
+def extract_workload_snapshot(
+    session: Session, user_id: uuid.UUID, now: datetime | None = None
+) -> tuple[Signals, list[TaskContext], WorkloadSnapshotMetadata]:
+    """Batch 4 — API-layer entry point for `GET /api/v1/workload/current`.
+    A standalone top-level orchestrator (structurally parallel to
+    `_extract_all`, not layered on top of it) so it can reach the raw
+    `completed_tasks`/`sessions` rows `extract_backlog_completion_study_signals`
+    fetches internally, needed for `WorkloadSnapshotMetadata` — those
+    rows aren't part of `Signals`' own contract and `_extract_all`'s
+    return tuple is relied on verbatim by `extract_signals_with_context`,
+    so it is not changed here.
+
+    Still exactly the same 5/6 bounded queries as `extract_signals`/
+    `extract_signals_with_context` (same fetch helpers, same call
+    sequence, same conditional TakeBreak query) — `extract_signals`,
+    `extract_signals_with_context`, and `_extract_all` are untouched by
+    Batch 4, both in signature and behavior.
+
+    `active_task_count`/`recent_completed_task_count`/
+    `recent_study_session_count` are each `len()` of a list this
+    function fetches anyway for the scored signals themselves — zero
+    additional queries."""
+    reference_now = _as_utc_instant(now) if now is not None else datetime.now(UTC)
+    active_tasks = _fetch_active_tasks(session, user_id)  # query 1
+    due_soon_72h = _due_within(active_tasks, DUE_SOON_WINDOW, reference_now)
+    blocks_by_task = _fetch_due_soon_blocks(
+        session, user_id, [t.id for t in due_soon_72h]
+    )  # query 2
+
+    deadline_importance_feasibility = _compute_deadline_importance_feasibility(
+        active_tasks, due_soon_72h, blocks_by_task, reference_now
+    )
+
+    subtasks = _fetch_subtasks(session, user_id)  # query 3
+    completion_window_start = reference_now - timedelta(days=COMPLETION_DELAY_LOOKBACK_DAYS)
+    completed_tasks = _fetch_completed_tasks(
+        session, user_id, completion_window_start, reference_now
+    )  # query 4
+    missed_break_window_start = reference_now - timedelta(days=MISSED_BREAK_LOOKBACK_DAYS)
+    sessions = _fetch_recent_sessions(session, user_id, missed_break_window_start)  # query 5
+    backlog_completion_study = _compute_and_fetch_backlog_completion_study(
+        session, user_id, active_tasks, subtasks, completed_tasks, sessions, reference_now
+    )  # + query 6 conditional (TakeBreak)
+
+    signals = Signals(**deadline_importance_feasibility, **backlog_completion_study)
+    task_context = build_task_context(
+        active_tasks, due_soon_72h, blocks_by_task, signals.relevant_task_ids, reference_now
+    )
+    metadata = WorkloadSnapshotMetadata(
+        active_task_count=len(active_tasks),
+        recent_completed_task_count=len(completed_tasks),
+        recent_study_session_count=len(sessions),
+    )
+    return signals, task_context, metadata

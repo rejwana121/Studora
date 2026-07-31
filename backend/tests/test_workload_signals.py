@@ -42,6 +42,7 @@ from app.services.workload.signals import (
     extract_deadline_importance_feasibility_signals,
     extract_signals,
     extract_signals_with_context,
+    extract_workload_snapshot,
 )
 
 NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
@@ -1255,3 +1256,207 @@ def test_extract_signals_with_context_query_count_bounded_6_with_break_candidate
 
         count = _count_select_statements(engine, _run)
     assert count == 6
+
+
+# =====================================================================
+# Batch 4: extract_workload_snapshot / WorkloadSnapshotMetadata
+# =====================================================================
+
+
+def test_extract_workload_snapshot_matches_extract_signals_with_context(engine):
+    """extract_workload_snapshot is a standalone orchestrator (not
+    layered on _extract_all) but must produce byte-identical Signals and
+    TaskContext to extract_signals_with_context for the same fixture."""
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=10), estimate_hours=2.0))
+        session.commit()
+
+        signals_a, context_a = extract_signals_with_context(session, user_id, now=NOW)
+        signals_b, context_b, _metadata = extract_workload_snapshot(session, user_id, now=NOW)
+
+    assert signals_a == signals_b
+    assert context_a == context_b
+
+
+def test_extract_workload_snapshot_active_task_count_includes_tasks_due_beyond_72h(engine):
+    """Proves active_task_count is the TOTAL active-task count, not
+    len(relevant_task_ids) — a task due in 10 days is neither overdue nor
+    due-soon (so it is excluded from relevant_task_ids), but must still
+    count toward active_task_count (Checkpoint — approved correction:
+    a user with real active tasks, none due soon, is not insufficient-data)."""
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        far_future = _task(user_id, NOW + timedelta(days=10))
+        session.add(far_future)
+        session.commit()
+
+        signals, _context, metadata = extract_workload_snapshot(session, user_id, now=NOW)
+
+    assert far_future.id not in signals.relevant_task_ids
+    assert metadata.active_task_count == 1
+
+
+def test_extract_workload_snapshot_recent_completed_task_count(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        completed = _task(
+            user_id,
+            NOW - timedelta(days=1),
+            status="Completed",
+            completed_at=NOW - timedelta(hours=2),
+        )
+        session.add(completed)
+        session.commit()
+
+        _signals, _context, metadata = extract_workload_snapshot(session, user_id, now=NOW)
+
+    assert metadata.recent_completed_task_count == 1
+
+
+def test_extract_workload_snapshot_recent_study_session_count_includes_short_finished_session(
+    engine,
+):
+    """Proves the broadened session query counts a Finished session that
+    never reached the 90-minute missed-break threshold — the count must
+    reflect ANY recent session, not just long ones."""
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        short = _finished_session(user_id, NOW - timedelta(hours=1), active_duration_seconds=600)
+        session.add(short)
+        session.commit()
+
+        signals, _context, metadata = extract_workload_snapshot(session, user_id, now=NOW)
+
+    assert metadata.recent_study_session_count == 1
+    # And this short session must NOT count toward missed_break_count.
+    assert signals.missed_break_count == 0
+
+
+def test_extract_workload_snapshot_recent_study_session_count_includes_current_active_session(
+    engine,
+):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        active = _active_session(user_id, NOW - timedelta(minutes=90))
+        session.add(active)
+        session.commit()
+
+        signals, _context, metadata = extract_workload_snapshot(session, user_id, now=NOW)
+
+    assert metadata.recent_study_session_count == 1
+    assert metadata.active_task_count == 0
+    assert signals.long_continuous_session_flag is True
+
+
+def test_extract_workload_snapshot_recent_study_session_count_excludes_session_older_than_7_days(
+    engine,
+):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        old = _finished_session(
+            user_id, NOW - timedelta(days=8), active_duration_seconds=6000
+        )
+        session.add(old)
+        session.commit()
+
+        _signals, _context, metadata = extract_workload_snapshot(session, user_id, now=NOW)
+
+    assert metadata.recent_study_session_count == 0
+
+
+def test_extract_workload_snapshot_all_metadata_zero_when_no_data(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        _signals, _context, metadata = extract_workload_snapshot(session, user_id, now=NOW)
+
+    assert metadata.active_task_count == 0
+    assert metadata.recent_completed_task_count == 0
+    assert metadata.recent_study_session_count == 0
+
+
+def test_extract_workload_snapshot_metadata_ownership_isolation(engine):
+    owner_a = uuid.uuid4()
+    owner_b = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(owner_a, NOW + timedelta(hours=5)))
+        session.add(_task(owner_b, NOW + timedelta(hours=5)))
+        session.add(_task(owner_b, NOW + timedelta(hours=5)))
+        session.add(
+            _task(
+                owner_b,
+                NOW - timedelta(days=1),
+                status="Completed",
+                completed_at=NOW - timedelta(hours=1),
+            )
+        )
+        session.add(_active_session(owner_b, NOW - timedelta(minutes=90)))
+        session.commit()
+
+        _signals, _context, metadata = extract_workload_snapshot(session, owner_a, now=NOW)
+
+    assert metadata.active_task_count == 1
+    assert metadata.recent_completed_task_count == 0
+    assert metadata.recent_study_session_count == 0
+
+
+def test_extract_workload_snapshot_query_count_bounded_5_without_break_candidates(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        session.add(_task(user_id, NOW + timedelta(hours=5)))
+        session.commit()
+
+        def _run():
+            extract_workload_snapshot(session, user_id, now=NOW)
+
+        count = _count_select_statements(engine, _run)
+    assert count == 5
+
+
+def test_extract_workload_snapshot_query_count_bounded_6_with_break_candidates(engine):
+    user_id = uuid.uuid4()
+    with Session(engine) as session:
+        s = _finished_session(user_id, NOW - timedelta(days=1), active_duration_seconds=5400)
+        session.add(s)
+        session.commit()
+
+        def _run():
+            extract_workload_snapshot(session, user_id, now=NOW)
+
+        count = _count_select_statements(engine, _run)
+    assert count == 6
+
+
+def test_extract_workload_snapshot_query_count_flat_as_rows_increase(engine):
+    user_id = uuid.uuid4()
+    counts = []
+    with Session(engine) as session:
+        for n in (2, 20):
+            for i in range(n):
+                task = _task(user_id, NOW + timedelta(hours=1, minutes=i), estimate_hours=1.0)
+                session.add(task)
+                session.flush()
+                session.add(
+                    _block(
+                        user_id,
+                        task.id,
+                        NOW + timedelta(minutes=i),
+                        NOW + timedelta(minutes=i, hours=1),
+                    )
+                )
+                session.add(_subtask(user_id, task.id, is_complete=(i % 2 == 0)))
+                session.add(
+                    _finished_session(
+                        user_id,
+                        NOW - timedelta(hours=1, minutes=i),
+                        active_duration_seconds=600,
+                    )
+                )
+            session.commit()
+
+            def _run():
+                extract_workload_snapshot(session, user_id, now=NOW)
+
+            counts.append(_count_select_statements(engine, _run))
+
+    assert counts == [5, 5]

@@ -125,6 +125,28 @@ class TaskContext(BaseModel):
     had_missing_estimate: bool
 
 
+class WorkloadSnapshotMetadata(BaseModel):
+    """Batch 4 — additive, non-scored evidence-of-activity counts used
+    solely by `app.services.workload.evaluation` to determine
+    `insufficient_data` at the API layer. Never fed into `evaluate()`
+    (not a `Signals` field, never in `constants.WEIGHTS`) and never a
+    second query: every count here is `len()` of rows the existing 5/6-
+    query extraction path (`app.services.workload.signals.
+    extract_workload_snapshot`) already fetched for other signals.
+
+    Deliberately three-dimensional (Checkpoint — approved correction):
+    Studora evaluates Tasks, Completion history, and Study behavior, so
+    "no data" must mean no evidence across all three, not merely no
+    active tasks — a user with no active tasks but a current long study
+    session, or a recent completed task, still has real signal to show."""
+
+    model_config = ConfigDict(frozen=True)
+
+    active_task_count: int
+    recent_completed_task_count: int
+    recent_study_session_count: int
+
+
 class Recommendation(BaseModel):
     """Batch 3 — one deterministic, read-only suggestion
     (docs/phase1/11-workload-engine-spec.md §11.5). `proposed_change` is
