@@ -23,13 +23,19 @@ class Signals(BaseModel):
     """One user's fully-computed raw signal values (spec §11.1), the
     engine's sole input. Every field here corresponds 1:1 to a key in
     `app.services.workload.constants.WEIGHTS` except `had_missing_estimate`
-    (drives `confidence`, not itself weighted) and `relevant_task_ids`
-    (passed through to the response unscored). All fields default to the
-    "no load" value so a fixture only needs to set what it's testing."""
+    (drives `confidence`, not itself weighted), `relevant_task_ids`
+    (passed through to the response unscored), and `due_24h_count`/
+    `due_48h_count` (informational-only breakdown context for the API
+    layer — deliberately not in `WEIGHTS`, so `evaluate()`'s factor/score
+    loop never touches them; `cluster_72h`/`due_72h_count` already cover
+    the 72h urgency scoring dimension). All fields default to the "no
+    load" value so a fixture only needs to set what it's testing."""
 
     model_config = ConfigDict(extra="forbid")
 
     overdue_count: int = 0
+    due_24h_count: int = 0
+    due_48h_count: int = 0
     cluster_72h: int = 0
     due_72h_count: int = 0
     high_priority_due_soon_count: int = 0

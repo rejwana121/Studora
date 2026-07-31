@@ -13,6 +13,14 @@ fixed by any other approved document.
 
 ENGINE_VERSION = "0.1.0"
 
+# Task types counted as "assessments" for assessment_type_due_soon_count
+# (spec §11.1: "Quiz/Midterm/FinalExam/Project/Presentation due <=72h").
+# Cross-checked against the real TaskType enum (app/schemas/task.py) --
+# deliberately excludes Assignment/Lab/StudySession/Other.
+ASSESSMENT_TYPES: frozenset[str] = frozenset(
+    {"Quiz", "Midterm", "FinalExam", "Project", "Presentation"}
+)
+
 # Signal -> spec §11.1 group, used to label factors in the response.
 GROUP_OF: dict[str, str] = {
     "overdue_count": "Deadline",
