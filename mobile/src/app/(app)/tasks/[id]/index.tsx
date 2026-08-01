@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { Fragment, useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { deleteTask, getTask, updateTask } from '@/api/tasks';
@@ -157,6 +157,23 @@ export default function TaskDetailsScreen() {
     );
   }
 
+  // Only the fields that actually have a value become a row — this is
+  // what makes "no divider gap for an omitted optional field" true by
+  // construction (Estimate/Notes simply aren't in the array when absent),
+  // rather than something rendered conditionally around a fixed divider
+  // count. Notes is `stacked` since it can be long free text that must
+  // wrap, unlike the other short single-line values.
+  const detailRows: { key: string; label: string; value: string; dotColor?: string; stacked?: boolean }[] = [
+    { key: 'type', label: 'Type', value: taskTypeLabel[task.type] },
+    { key: 'deadline', label: 'Deadline', value: formatDeadline(task.deadline) },
+    { key: 'priority', label: 'Priority', value: task.priority, dotColor: priorityColor[task.priority] },
+    { key: 'status', label: 'Status', value: task.status },
+    ...(task.estimate_hours !== null
+      ? [{ key: 'estimate', label: 'Estimate', value: `${task.estimate_hours}h` }]
+      : []),
+    ...(task.notes ? [{ key: 'notes', label: 'Notes', value: task.notes, stacked: true }] : []),
+  ];
+
   return (
     <Screen>
       <BackRow />
@@ -178,18 +195,15 @@ export default function TaskDetailsScreen() {
           </View>
         )}
 
-        <DetailRow label="Type" value={taskTypeLabel[task.type]} />
-        <DetailRow label="Deadline" value={formatDeadline(task.deadline)} />
-        <DetailRow
-          label="Priority"
-          value={task.priority}
-          dotColor={priorityColor[task.priority]}
-        />
-        <DetailRow label="Status" value={task.status} />
-        {task.estimate_hours !== null && (
-          <DetailRow label="Estimate" value={`${task.estimate_hours}h`} />
-        )}
-        {task.notes && <DetailRow label="Notes" value={task.notes} />}
+        <View style={styles.detailGroup}>
+          {detailRows.map((row, index) => (
+            <Fragment key={row.key}>
+              <DetailRow label={row.label} value={row.value} dotColor={row.dotColor} stacked={row.stacked} />
+              {index < detailRows.length - 1 && <View style={styles.divider} />}
+            </Fragment>
+          ))}
+        </View>
+
         {task.reschedule_count > 0 && (
           <ThemedText type="default" style={styles.rescheduleNote}>
             Rescheduled {task.reschedule_count}x
@@ -200,45 +214,53 @@ export default function TaskDetailsScreen() {
           <ThemedText type="default" style={styles.sectionHeader}>
             Subtasks
           </ThemedText>
-          {task.subtasks.length === 0 && (
+          {task.subtasks.length === 0 ? (
             <ThemedText type="default" style={styles.metaText}>
               No subtasks yet
             </ThemedText>
-          )}
-          {task.subtasks.map((subtask) => (
-            <View key={subtask.id} style={styles.subtaskRow}>
-              <Pressable
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: subtask.is_complete }}
-                accessibilityLabel={
-                  subtask.is_complete ? `Mark ${subtask.title} incomplete` : `Mark ${subtask.title} complete`
-                }
-                onPress={() => handleToggleSubtask(subtask.id, !subtask.is_complete)}
-                style={styles.checkbox}
-              >
-                <Ionicons
-                  name={subtask.is_complete ? 'checkbox' : 'square-outline'}
-                  size={22}
-                  color={subtask.is_complete ? color.primary.violet : color.text.secondary}
-                />
-              </Pressable>
-              <ThemedText
-                type="default"
-                style={[styles.subtaskTitle, subtask.is_complete && styles.subtaskTitleDone]}
-              >
-                {subtask.title}
-              </ThemedText>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Delete ${subtask.title}`}
-                onPress={() => handleDeleteSubtask(subtask.id, subtask.title)}
-              >
-                <ThemedText type="default" style={styles.deleteGlyph}>
-                  ✕
-                </ThemedText>
-              </Pressable>
+          ) : (
+            <View style={styles.subtaskGroup}>
+              {task.subtasks.map((subtask, index) => (
+                <Fragment key={subtask.id}>
+                  <View style={styles.subtaskRow}>
+                    <Pressable
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: subtask.is_complete }}
+                      accessibilityLabel={
+                        subtask.is_complete
+                          ? `Mark ${subtask.title} incomplete`
+                          : `Mark ${subtask.title} complete`
+                      }
+                      onPress={() => handleToggleSubtask(subtask.id, !subtask.is_complete)}
+                      style={styles.checkbox}
+                    >
+                      <Ionicons
+                        name={subtask.is_complete ? 'checkbox' : 'square-outline'}
+                        size={22}
+                        color={subtask.is_complete ? color.primary.violet : color.text.secondary}
+                      />
+                    </Pressable>
+                    <ThemedText
+                      type="default"
+                      style={[styles.subtaskTitle, subtask.is_complete && styles.subtaskTitleDone]}
+                    >
+                      {subtask.title}
+                    </ThemedText>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete ${subtask.title}`}
+                      onPress={() => handleDeleteSubtask(subtask.id, subtask.title)}
+                    >
+                      <ThemedText type="default" style={styles.deleteGlyph}>
+                        ✕
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                  {index < task.subtasks.length - 1 && <View style={styles.divider} />}
+                </Fragment>
+              ))}
             </View>
-          ))}
+          )}
           <View style={styles.addSubtaskRow}>
             <View style={styles.addSubtaskInput}>
               <TextField
@@ -285,7 +307,34 @@ function BackRow() {
   );
 }
 
-function DetailRow({ label, value, dotColor }: { label: string; value: string; dotColor?: string }) {
+function DetailRow({
+  label,
+  value,
+  dotColor,
+  stacked,
+}: {
+  label: string;
+  value: string;
+  dotColor?: string;
+  stacked?: boolean;
+}) {
+  // Notes uses the stacked layout (label above, value below, full width,
+  // wraps naturally) since it can be arbitrarily long free text — the
+  // inline label-left/value-right layout used for every short field
+  // would either overflow or force an unusably narrow value column.
+  if (stacked) {
+    return (
+      <View style={styles.detailRowStacked}>
+        <ThemedText type="default" style={styles.detailLabel}>
+          {label}
+        </ThemedText>
+        <ThemedText type="default" style={styles.detailValueStacked}>
+          {value}
+        </ThemedText>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.detailRow}>
       <ThemedText type="default" style={styles.detailLabel}>
@@ -293,7 +342,7 @@ function DetailRow({ label, value, dotColor }: { label: string; value: string; d
       </ThemedText>
       <View style={styles.detailValueRow}>
         {dotColor && <View style={[styles.priorityDot, { backgroundColor: dotColor }]} />}
-        <ThemedText type="default" style={styles.detailValue}>
+        <ThemedText type="default" style={styles.detailValue} numberOfLines={1}>
           {value}
         </ThemedText>
       </View>
@@ -352,12 +401,28 @@ const styles = StyleSheet.create({
     fontSize: typeTokens.caption.fontSize,
     color: color.text.secondary,
   },
+  detailGroup: {
+    backgroundColor: color.background.card,
+    borderRadius: radius.card,
+    overflow: 'hidden',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: color.border.divider,
+    marginHorizontal: space.md,
+  },
   detailRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: space.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: color.border.divider,
+    minHeight: touchTarget.min,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+  },
+  detailRowStacked: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    gap: space.xs,
   },
   detailLabel: {
     fontSize: typeTokens.body.fontSize,
@@ -367,8 +432,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
+    flexShrink: 1,
   },
   detailValue: {
+    fontSize: typeTokens.body.fontSize,
+    color: color.text.primary,
+    fontWeight: '600',
+  },
+  detailValueStacked: {
     fontSize: typeTokens.body.fontSize,
     color: color.text.primary,
     fontWeight: '600',
@@ -381,10 +452,16 @@ const styles = StyleSheet.create({
   rescheduleNote: {
     fontSize: typeTokens.caption.fontSize,
     color: color.text.secondary,
+    marginTop: space.xs,
   },
   subtasksSection: {
     marginTop: space.md,
     gap: space.xs,
+  },
+  subtaskGroup: {
+    backgroundColor: color.background.card,
+    borderRadius: radius.card,
+    overflow: 'hidden',
   },
   sectionHeader: {
     fontSize: typeTokens.label.fontSize,
@@ -396,7 +473,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
-    paddingVertical: space.xs,
+    minHeight: touchTarget.min,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
   },
   checkbox: {
     minWidth: touchTarget.min,
@@ -422,7 +501,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: space.sm,
-    marginTop: space.xs,
+    marginTop: space.sm,
   },
   addSubtaskInput: {
     flex: 1,
