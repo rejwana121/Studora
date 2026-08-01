@@ -1,23 +1,34 @@
+import Constants from 'expo-constants';
 import { router, type Href } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 
 import { getProfile, updateProfile } from '@/api/profile';
 import { Banner } from '@/components/banner';
 import { Button } from '@/components/button';
 import { Screen } from '@/components/screen';
 import { ThemedText } from '@/components/themed-text';
-import { signOut } from '@/features/auth/auth-service';
+import { requestPasswordReset, signOut } from '@/features/auth/auth-service';
 import { useSession } from '@/features/auth/session-context';
+import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
 import type { Profile } from '@/types/api';
 import { color, radius, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
 
+const APP_VERSION = Constants.expoConfig?.version ?? '1.0.0';
+
 export default function ProfileScreen() {
   const { session } = useSession();
+  const { permissionStatus, requestPermission } = useNotificationCoordinator();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isRequestingNotifications, setIsRequestingNotifications] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const [resetFeedback, setResetFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null
+  );
 
   useEffect(() => {
     if (!session) return;
@@ -47,15 +58,66 @@ export default function ProfileScreen() {
     };
   }, [session]);
 
-  async function handleSignOut() {
+  async function confirmSignOut() {
     setIsSigningOut(true);
     await signOut();
     setIsSigningOut(false);
     router.replace('/(auth)/welcome');
   }
 
+  function handleSignOut() {
+    Alert.alert('Sign out?', "You'll need to sign in again to access your Studora account.", [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', onPress: confirmSignOut },
+    ]);
+  }
+
+  async function handleNotificationsPress() {
+    setNotificationsError(null);
+    if (permissionStatus === 'undetermined') {
+      setIsRequestingNotifications(true);
+      try {
+        await requestPermission();
+      } catch {
+        setNotificationsError('Could not update notification settings.');
+      }
+      setIsRequestingNotifications(false);
+    } else if (permissionStatus === 'denied') {
+      try {
+        await Linking.openSettings();
+      } catch {
+        setNotificationsError('Could not open Settings.');
+      }
+    }
+  }
+
+  async function handleResetPassword() {
+    const email = session?.user.email;
+    if (!email || isSendingReset) return;
+    setIsSendingReset(true);
+    setResetFeedback(null);
+    const result = await requestPasswordReset(email);
+    setIsSendingReset(false);
+    setResetFeedback(
+      result.ok
+        ? { type: 'success', message: 'Reset link sent to your email.' }
+        : { type: 'error', message: result.message ?? 'Could not send reset link.' }
+    );
+  }
+
   const email = session?.user.email ?? null;
   const initials = getInitials(profile?.display_name ?? null, email);
+
+  const notificationsActionable = permissionStatus === 'undetermined' || permissionStatus === 'denied';
+  const notificationsLabel = isRequestingNotifications
+    ? '…'
+    : permissionStatus === 'granted'
+      ? 'On'
+      : permissionStatus === 'denied'
+        ? 'Off — Open Settings'
+        : permissionStatus === 'undetermined'
+          ? 'Enable'
+          : '…';
 
   return (
     <Screen>
@@ -68,13 +130,13 @@ export default function ProfileScreen() {
 
       {profile && (
         <>
-          <View style={styles.headerCard}>
+          <View style={styles.identityHeader}>
             <View style={styles.avatar}>
               <ThemedText type="default" style={styles.avatarText}>
                 {initials}
               </ThemedText>
             </View>
-            <View style={styles.headerText}>
+            <View style={styles.identityText}>
               <ThemedText type="default" style={styles.displayName} numberOfLines={1}>
                 {profile.display_name ?? email ?? 'Studora User'}
               </ThemedText>
@@ -86,29 +148,102 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          <View style={styles.infoCard}>
-            <InfoRow label="Account status" value="Signed in" />
-            <View style={styles.infoDivider} />
-            <InfoRow label="Timezone" value={profile.timezone} />
+          <ThemedText type="default" style={styles.sectionHeader}>
+            Academic
+          </ThemedText>
+          <View style={styles.group}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Manage Subjects"
+              onPress={() => router.push('/profile/subjects' as Href)}
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+            >
+              <ThemedText type="default" style={styles.rowLabel}>
+                Manage Subjects
+              </ThemedText>
+              <ThemedText type="default" style={styles.chevron}>
+                ›
+              </ThemedText>
+            </Pressable>
           </View>
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Manage Subjects"
-            onPress={() => router.push('/profile/subjects' as Href)}
-            style={({ pressed }) => [styles.manageRow, pressed && styles.manageRowPressed]}
-          >
-            <ThemedText type="default" style={styles.manageRowLabel}>
-              Manage Subjects
-            </ThemedText>
-            <ThemedText type="default" style={styles.manageRowChevron}>
-              ›
-            </ThemedText>
-          </Pressable>
-
-          <View style={styles.signOutSection}>
-            <Button label="Sign Out" variant="secondary" onPress={handleSignOut} loading={isSigningOut} />
+          <ThemedText type="default" style={styles.sectionHeader}>
+            Preferences
+          </ThemedText>
+          <View style={styles.group}>
+            <View style={styles.row}>
+              <ThemedText type="default" style={styles.rowLabel}>
+                Timezone
+              </ThemedText>
+              <ThemedText type="default" style={styles.rowValue} numberOfLines={1}>
+                {profile.timezone}
+              </ThemedText>
+            </View>
+            <View style={styles.divider} />
+            {notificationsActionable ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Notifications: ${notificationsLabel}`}
+                onPress={handleNotificationsPress}
+                disabled={isRequestingNotifications}
+                style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+              >
+                <ThemedText type="default" style={styles.rowLabel}>
+                  Notifications
+                </ThemedText>
+                <ThemedText type="default" style={[styles.rowValue, styles.rowValueAction]} numberOfLines={1}>
+                  {notificationsLabel}
+                </ThemedText>
+              </Pressable>
+            ) : (
+              <View style={styles.row}>
+                <ThemedText type="default" style={styles.rowLabel}>
+                  Notifications
+                </ThemedText>
+                <ThemedText type="default" style={styles.rowValue} numberOfLines={1}>
+                  {notificationsLabel}
+                </ThemedText>
+              </View>
+            )}
+            {notificationsError && (
+              <ThemedText type="default" style={styles.inlineError}>
+                {notificationsError}
+              </ThemedText>
+            )}
           </View>
+
+          <ThemedText type="default" style={styles.sectionHeader}>
+            Security
+          </ThemedText>
+          <View style={styles.group}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Reset Password"
+              onPress={handleResetPassword}
+              disabled={isSendingReset}
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+            >
+              <ThemedText type="default" style={styles.rowLabelAction}>
+                {isSendingReset ? 'Sending…' : 'Reset Password'}
+              </ThemedText>
+            </Pressable>
+            {resetFeedback && (
+              <ThemedText
+                type="default"
+                style={resetFeedback.type === 'success' ? styles.inlineSuccess : styles.inlineError}
+              >
+                {resetFeedback.message}
+              </ThemedText>
+            )}
+          </View>
+
+          <View style={styles.signOutBlock}>
+            <Button label="Sign Out" variant="text" onPress={handleSignOut} loading={isSigningOut} />
+          </View>
+
+          <ThemedText type="default" style={styles.footer}>
+            Studora v{APP_VERSION}
+          </ThemedText>
         </>
       )}
     </Screen>
@@ -122,19 +257,6 @@ function getInitials(displayName: string | null, email: string | null): string {
   return source.slice(0, 2).toUpperCase();
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.infoRow}>
-      <ThemedText type="default" style={styles.infoLabel}>
-        {label}
-      </ThemedText>
-      <ThemedText type="default" style={styles.infoValue}>
-        {value}
-      </ThemedText>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   title: {
     fontSize: typeTokens.display.fontSize,
@@ -142,14 +264,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: color.primary.violet,
   },
-  headerCard: {
+  identityHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
-    backgroundColor: color.background.card,
-    borderRadius: radius.card,
-    padding: space.md,
-    marginTop: space.md,
+    marginTop: space.lg,
+    marginBottom: space.lg,
   },
   avatar: {
     width: 56,
@@ -164,7 +284,7 @@ const styles = StyleSheet.create({
     fontSize: typeTokens.heading.fontSize,
     fontWeight: '700',
   },
-  headerText: {
+  identityText: {
     flex: 1,
     gap: space.xs,
   },
@@ -178,56 +298,80 @@ const styles = StyleSheet.create({
     color: color.text.secondary,
     fontSize: typeTokens.caption.fontSize,
   },
-  infoCard: {
+  sectionHeader: {
+    fontSize: typeTokens.label.fontSize,
+    fontWeight: '600',
+    color: color.text.secondary,
+    textTransform: 'uppercase',
+    marginTop: space.md,
+    marginBottom: space.xs,
+  },
+  group: {
     backgroundColor: color.background.card,
     borderRadius: radius.card,
-    padding: space.md,
-    marginTop: space.md,
+    overflow: 'hidden',
   },
-  infoDivider: {
-    height: 1,
-    backgroundColor: color.border.divider,
-    marginVertical: space.sm,
-  },
-  manageRow: {
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     minHeight: touchTarget.min,
-    backgroundColor: color.background.card,
-    borderRadius: radius.card,
     paddingHorizontal: space.md,
-    marginTop: space.md,
+    gap: space.sm,
   },
-  manageRowPressed: {
+  rowPressed: {
     opacity: 0.7,
   },
-  manageRowLabel: {
+  divider: {
+    height: 1,
+    backgroundColor: color.border.divider,
+    marginHorizontal: space.md,
+  },
+  rowLabel: {
+    fontSize: typeTokens.body.fontSize,
+    color: color.text.primary,
+    flexShrink: 1,
+  },
+  rowLabelAction: {
     fontSize: typeTokens.body.fontSize,
     fontWeight: '600',
-    color: color.text.primary,
+    color: color.primary.violet,
   },
-  manageRowChevron: {
+  rowValue: {
+    fontSize: typeTokens.body.fontSize,
+    color: color.text.secondary,
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  rowValueAction: {
+    color: color.primary.violet,
+    fontWeight: '600',
+  },
+  chevron: {
     fontSize: typeTokens.heading.fontSize,
     color: color.text.secondary,
   },
-  signOutSection: {
-    marginTop: space.xl,
-    paddingTop: space.md,
-    borderTopWidth: 1,
-    borderTopColor: color.border.divider,
+  inlineError: {
+    fontSize: typeTokens.caption.fontSize,
+    color: color.risk.high.text,
+    paddingHorizontal: space.md,
+    paddingBottom: space.sm,
   },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  infoLabel: {
+  inlineSuccess: {
+    fontSize: typeTokens.caption.fontSize,
     color: color.text.secondary,
-    fontSize: typeTokens.body.fontSize,
+    paddingHorizontal: space.md,
+    paddingBottom: space.sm,
   },
-  infoValue: {
-    color: color.text.primary,
-    fontSize: typeTokens.body.fontSize,
-    fontWeight: '600',
+  signOutBlock: {
+    alignItems: 'center',
+    marginTop: space.xl,
+  },
+  footer: {
+    fontSize: typeTokens.caption.fontSize,
+    color: color.text.secondary,
+    textAlign: 'center',
+    marginTop: space.md,
+    marginBottom: space.lg,
   },
 });
