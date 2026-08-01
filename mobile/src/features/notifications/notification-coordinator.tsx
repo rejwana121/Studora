@@ -1,24 +1,40 @@
 import * as Notifications from 'expo-notifications';
 import { router, type Href } from 'expo-router';
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 
+import { getTask, getTasksToday } from '@/api/tasks';
 import { listSessions } from '@/api/sessions';
 import { useSession } from '@/features/auth/session-context';
 
 import {
   cancelAllBreakNotifications,
-  getFocusBreakPermissionStatus,
+  getNotificationPermissionStatus,
   isFocusBreakNotificationData,
   reconcileBreakNotificationSchedule,
-  requestFocusBreakPermission,
+  requestNotificationPermission,
   type FocusBreakNotificationData,
-  type FocusBreakPermissionStatus,
+  type NotificationPermissionStatus,
 } from './schedule-break-notification';
+import {
+  cancelAllDeadlineNotifications,
+  isTaskDeadlineNotificationData,
+  reconcileDeadlineNotificationSchedule,
+  type TaskDeadlineNotificationData,
+} from './schedule-deadline-notification';
 
 const FOCUS_HREF = '/focus' as Href;
 
 interface NotificationCoordinatorValue {
-  permissionStatus: FocusBreakPermissionStatus | 'loading';
+  permissionStatus: NotificationPermissionStatus | 'loading';
   requestPermission: () => Promise<void>;
   /** Bumped once per foreground-received or tapped focus-break
    * notification whose ownership was verified against the current
@@ -39,8 +55,9 @@ export function useNotificationCoordinator(): NotificationCoordinatorValue {
   return value;
 }
 
-function notificationEventKey(data: FocusBreakNotificationData): string {
-  return `${data.session_id}:${data.eligible_at}`;
+function notificationEventKey(data: FocusBreakNotificationData | TaskDeadlineNotificationData): string {
+  if (isFocusBreakNotificationData(data)) return `focus_break:${data.session_id}:${data.eligible_at}`;
+  return `task_deadline:${data.task_id}:${data.deadline}`;
 }
 
 // The foreground presentation handler (`setNotificationHandler`) is
@@ -54,7 +71,7 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
   const { session } = useSession();
   const token = session?.access_token ?? null;
   const userId = session?.user.id ?? null;
-  const [permissionStatus, setPermissionStatus] = useState<FocusBreakPermissionStatus | 'loading'>('loading');
+  const [permissionStatus, setPermissionStatus] = useState<NotificationPermissionStatus | 'loading'>('loading');
   const [focusBreakIntentVersion, setFocusBreakIntentVersion] = useState(0);
 
   // Tracks which user id the cold-start sweep has already run for, so a
@@ -102,7 +119,7 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
 
   useEffect(() => {
     let isMounted = true;
-    getFocusBreakPermissionStatus().then((status) => {
+    getNotificationPermissionStatus().then((status) => {
       if (isMounted) setPermissionStatus(status);
     });
     return () => {
@@ -111,7 +128,7 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
   }, []);
 
   const requestPermission = useCallback(async () => {
-    const status = await requestFocusBreakPermission();
+    const status = await requestNotificationPermission();
     setPermissionStatus(status);
   }, []);
 
@@ -147,6 +164,56 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
     // actual current session — never navigate, never emit an intent.
   }, [registerIntent]);
 
+  // Tap-time ownership verification for a task-deadline notification —
+  // same shape as verifyOwnershipAndRegisterIntent above, but the "truth
+  // check" is the task's own existing ownership-scoped GET (backend
+  // get_owned_task already 404s a task_id that doesn't belong to the
+  // current user) rather than a session list. No intent-version bump is
+  // needed here (unlike Focus break): the task detail screen's own
+  // useFocusEffect already reloads on every navigation into it, so a
+  // direct router.push is sufficient.
+  const verifyDeadlineOwnershipAndNavigate = useCallback(async (data: TaskDeadlineNotificationData) => {
+    if (!claimNotificationEvent(notificationEventKey(data))) return; // duplicate received+response
+
+    const checkToken = tokenRef.current;
+    const checkUserId = userIdRef.current;
+    const gen = sweepGenerationRef.current;
+    if (disposedRef.current || !checkToken || !checkUserId) return;
+
+    const result = await getTask(checkToken, data.task_id);
+
+    if (disposedRef.current) return;
+    if (sweepGenerationRef.current !== gen) return;
+    if (userIdRef.current !== checkUserId) return;
+
+    if (!result.ok) return; // not found / not owned by the current user — never navigate
+    router.push(`/tasks/${data.task_id}` as Href);
+  }, []);
+
+  // Coordinator-owned deadline-schedule reconciliation — always fetches
+  // its own fresh GET /tasks/today rather than relying on any screen
+  // having mounted (same philosophy as the break-alert sweep's own
+  // independent listSessions call). Guarded by the same disposed/
+  // generation/user checks as every other async path here.
+  const runDeadlineReconcile = useCallback(async (force: boolean) => {
+    const checkToken = tokenRef.current;
+    const checkUserId = userIdRef.current;
+    const gen = sweepGenerationRef.current;
+    if (disposedRef.current || !checkToken || !checkUserId) return;
+
+    const [status, tasksResult] = await Promise.all([
+      getNotificationPermissionStatus(),
+      getTasksToday(checkToken),
+    ]);
+
+    if (disposedRef.current) return;
+    if (sweepGenerationRef.current !== gen) return;
+    if (userIdRef.current !== checkUserId) return;
+
+    if (!tasksResult.ok) return; // network/error — the next trigger retries
+    await reconcileDeadlineNotificationSchedule(tasksResult.data.pending, status === 'granted', { force });
+  }, []);
+
   // Sole registrant of both listeners in the app — Focus consumes their
   // effect only through `focusBreakIntentVersion`, never by registering a
   // second listener of its own.
@@ -155,19 +222,41 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
       const data = notification.request.content.data;
       if (isFocusBreakNotificationData(data)) {
         void verifyOwnershipAndRegisterIntent(data);
+      } else if (isTaskDeadlineNotificationData(data)) {
+        void verifyDeadlineOwnershipAndNavigate(data);
       }
     });
     const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data;
       if (isFocusBreakNotificationData(data)) {
         void verifyOwnershipAndRegisterIntent(data);
+      } else if (isTaskDeadlineNotificationData(data)) {
+        void verifyDeadlineOwnershipAndNavigate(data);
       }
     });
     return () => {
       receivedSub.remove();
       responseSub.remove();
     };
-  }, [verifyOwnershipAndRegisterIntent]);
+  }, [verifyOwnershipAndRegisterIntent, verifyDeadlineOwnershipAndNavigate]);
+
+  // Foreground-return reconciliation — deadlines have no dedicated screen
+  // that's guaranteed mounted (unlike Focus's own AppState listener in
+  // use-focus-session.ts, scoped to the Focus screen), so the coordinator
+  // owns this listener itself. Forces a full re-enumeration on every
+  // foreground return, matching Focus's own "AppState-active forces"
+  // convention — time spent backgrounded may have let a scheduled
+  // notification already fire, which the in-memory cache alone can't see.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (next === 'active') {
+        void runDeadlineReconcile(true);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [runDeadlineReconcile]);
 
   // Cold-start sweep + account-switch guard, keyed on user identity (not
   // raw token — an access-token refresh for the SAME user must not
@@ -194,6 +283,7 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
         // this provider ever unmounting — User A's pending schedule
         // must never survive into User B's session.
         void cancelAllBreakNotifications();
+        void cancelAllDeadlineNotifications();
       }
     }
 
@@ -209,17 +299,21 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
       const lastResponse = await Notifications.getLastNotificationResponseAsync();
       if (disposedRef.current || sweepGenerationRef.current !== gen || userIdRef.current !== capturedUserId) return;
 
-      const status = await getFocusBreakPermissionStatus();
+      const status = await getNotificationPermissionStatus();
       if (disposedRef.current || sweepGenerationRef.current !== gen || userIdRef.current !== capturedUserId) return;
 
-      // Fetch the current authenticated truth ONCE and use it for both
-      // ownership verification (below) and schedule reconciliation — no
-      // second redundant fetch.
-      const result = await listSessions(token, { limit: 1 });
+      // Fetch the current authenticated truth ONCE per domain and reuse
+      // it for both ownership verification (below) and schedule
+      // reconciliation — never a second redundant fetch.
+      const [sessionsResult, tasksTodayResult] = await Promise.all([
+        listSessions(token, { limit: 1 }),
+        getTasksToday(token),
+      ]);
       if (disposedRef.current || sweepGenerationRef.current !== gen || userIdRef.current !== capturedUserId) return;
 
-      const row = result.ok ? (result.data[0] ?? null) : null;
+      const row = sessionsResult.ok ? (sessionsResult.data[0] ?? null) : null;
       const unfinished = row && (row.status === 'Active' || row.status === 'Paused') ? row : null;
+      const pendingTasks = tasksTodayResult.ok ? tasksTodayResult.data.pending : [];
 
       const responseData = lastResponse?.notification.request.content.data;
       if (lastResponse && isFocusBreakNotificationData(responseData)) {
@@ -239,14 +333,27 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
         // triggers navigation.
         await Notifications.clearLastNotificationResponseAsync();
         if (disposedRef.current || sweepGenerationRef.current !== gen || userIdRef.current !== capturedUserId) return;
+      } else if (lastResponse && isTaskDeadlineNotificationData(responseData)) {
+        if (claimNotificationEvent(notificationEventKey(responseData))) {
+          // Ownership rule: only navigate if this task_id is present in
+          // the CURRENT user's own just-fetched pending list (already
+          // ownership-scoped server-side by GET /tasks/today) — never
+          // trust the payload alone, same reasoning as the break case.
+          if (pendingTasks.some((t) => t.id === responseData.task_id)) {
+            router.push(`/tasks/${responseData.task_id}` as Href);
+          }
+        }
+        await Notifications.clearLastNotificationResponseAsync();
+        if (disposedRef.current || sweepGenerationRef.current !== gen || userIdRef.current !== capturedUserId) return;
       }
 
-      // Restart-safe schedule reconciliation from the fetch above —
+      // Restart-safe schedule reconciliation from the fetches above —
       // never trust in-memory schedule state alone across a cold start.
       // Runs regardless of whether a response was owned/consumed above,
       // per "still reconcile/cancel schedules for the actual current
       // user."
       await reconcileBreakNotificationSchedule(unfinished, status === 'granted', { force: true });
+      await reconcileDeadlineNotificationSchedule(pendingTasks, status === 'granted', { force: true });
     })();
   }, [token, userId, registerIntent]);
 
@@ -275,6 +382,7 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
       sweepGenerationRef.current += 1;
       lastHandledNotificationKeyRef.current = null;
       void cancelAllBreakNotifications();
+      void cancelAllDeadlineNotifications();
     };
   }, []);
 

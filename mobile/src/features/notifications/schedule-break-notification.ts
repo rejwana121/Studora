@@ -42,21 +42,33 @@ function desiredSignature(session: StudySessionRead | null): string | null {
   return `${session.id}:${session.next_break_eligible_at}`;
 }
 
-export type FocusBreakPermissionStatus = 'granted' | 'denied' | 'undetermined';
+/** Generic OS-level notification permission status — a single per-app
+ * grant shared by every local-notification feature (focus breaks, task
+ * deadlines, ...), not specific to any one of them. */
+export type NotificationPermissionStatus = 'granted' | 'denied' | 'undetermined';
 
-function toPermissionStatus(response: Notifications.NotificationPermissionsStatus): FocusBreakPermissionStatus {
+/** Back-compat alias — `use-focus-break-cue.ts` imports this name and is
+ * out of this checkpoint's file scope; the type itself was never actually
+ * focus-specific, so this is a pure re-export, not a divergent copy. */
+export type FocusBreakPermissionStatus = NotificationPermissionStatus;
+
+function toPermissionStatus(response: Notifications.NotificationPermissionsStatus): NotificationPermissionStatus {
   if (response.granted) return 'granted';
   return response.status === 'denied' ? 'denied' : 'undetermined';
 }
 
-export async function getFocusBreakPermissionStatus(): Promise<FocusBreakPermissionStatus> {
+export async function getNotificationPermissionStatus(): Promise<NotificationPermissionStatus> {
   const response = await Notifications.getPermissionsAsync();
   return toPermissionStatus(response);
 }
 
 /** Android requires a notification channel to exist before the OS will
  * even show the SDK 13+ permission prompt — must run before
- * `requestPermissionsAsync`. No-op on iOS. */
+ * `requestPermissionsAsync`. No-op on iOS. Only ensures the focus-break
+ * channel: one channel existing is sufficient for the OS prompt itself;
+ * other features (e.g. task deadlines) ensure their own channel
+ * independently, opportunistically, before their own first scheduled
+ * notification. */
 export async function ensureFocusBreakChannel(): Promise<void> {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(FOCUS_BREAK_CHANNEL_ID, {
@@ -66,7 +78,7 @@ export async function ensureFocusBreakChannel(): Promise<void> {
   });
 }
 
-export async function requestFocusBreakPermission(): Promise<FocusBreakPermissionStatus> {
+export async function requestNotificationPermission(): Promise<NotificationPermissionStatus> {
   await ensureFocusBreakChannel();
   const response = await Notifications.requestPermissionsAsync();
   return toPermissionStatus(response);
