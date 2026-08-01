@@ -51,6 +51,19 @@ function isMeaningfulFactor(factor: WorkloadFactor): boolean {
   return false;
 }
 
+const MAX_VISIBLE_ITEMS = 3;
+
+/** Default "top 3" ordering: is_strong factors first, then other
+ * meaningful factors — each group preserving `factors`' existing order
+ * (the engine emits factors in a fixed `WEIGHTS`-declared order). Never
+ * re-derives or approximates the backend's own scoring/weighting. */
+function orderFactorsForDisplay(factors: WorkloadFactor[]): WorkloadFactor[] {
+  const meaningful = factors.filter(isMeaningfulFactor);
+  const strong = meaningful.filter((factor) => factor.is_strong);
+  const otherMeaningful = meaningful.filter((factor) => !factor.is_strong);
+  return [...strong, ...otherMeaningful];
+}
+
 function BackRow() {
   return (
     <View style={styles.topBar}>
@@ -76,14 +89,19 @@ export default function WorkloadScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showAllDetails, setShowAllDetails] = useState(false);
   const isFetchingRef = useRef(false);
 
   const load = useCallback(
     (isRefresh = false) => {
       if (!session || isFetchingRef.current) return;
       isFetchingRef.current = true;
-      if (isRefresh) setIsRefreshing(true);
-      else setIsLoading(true);
+      if (isRefresh) {
+        setIsRefreshing(true);
+        setShowAllDetails(false); // a fresh pull-to-refresh always starts collapsed
+      } else {
+        setIsLoading(true);
+      }
       getCurrentWorkload(session.access_token).then((result) => {
         isFetchingRef.current = false;
         if (result.ok) {
@@ -104,6 +122,11 @@ export default function WorkloadScreen() {
       load();
     }, [load])
   );
+
+  const orderedFactors = data ? orderFactorsForDisplay(data.factors) : [];
+  const hasOverflow = data
+    ? orderedFactors.length > MAX_VISIBLE_ITEMS || data.recommendations.length > MAX_VISIBLE_ITEMS
+    : false;
 
   return (
     <Screen style={styles.screen}>
@@ -131,9 +154,16 @@ export default function WorkloadScreen() {
           ) : (
             <>
               <LevelSummary data={data} />
-              <FactorsSection factors={data.factors} />
+              <FactorsSection factors={orderedFactors} showAll={showAllDetails} />
               {data.recommendations.length > 0 && (
-                <RecommendationsSection recommendations={data.recommendations} />
+                <RecommendationsSection recommendations={data.recommendations} showAll={showAllDetails} />
+              )}
+              {hasOverflow && (
+                <Button
+                  label={showAllDetails ? 'Show less' : 'View all details'}
+                  variant="text"
+                  onPress={() => setShowAllDetails((prev) => !prev)}
+                />
               )}
             </>
           )}
@@ -183,21 +213,21 @@ function LevelSummary({ data }: { data: WorkloadCurrentResponse }) {
   );
 }
 
-function FactorsSection({ factors }: { factors: WorkloadFactor[] }) {
-  const meaningfulFactors = factors.filter(isMeaningfulFactor);
+function FactorsSection({ factors, showAll }: { factors: WorkloadFactor[]; showAll: boolean }) {
+  const visibleFactors = showAll ? factors : factors.slice(0, MAX_VISIBLE_ITEMS);
 
   return (
     <View style={styles.section}>
       <ThemedText type="default" style={styles.sectionHeader}>
         What&apos;s contributing
       </ThemedText>
-      {meaningfulFactors.length === 0 ? (
+      {visibleFactors.length === 0 ? (
         <ThemedText type="default" style={styles.factorExplanation}>
           No major workload contributors were detected right now.
         </ThemedText>
       ) : (
         <View style={{ gap: space.sm }}>
-          {meaningfulFactors.map((factor) => (
+          {visibleFactors.map((factor) => (
             <View key={`${factor.group}-${factor.key}`} style={styles.factorCard}>
               <View style={styles.factorHeaderRow}>
                 <ThemedText type="default" style={styles.factorGroup}>
@@ -236,14 +266,22 @@ function getRecommendationHref(recommendation: WorkloadRecommendation): Href | n
   return null;
 }
 
-function RecommendationsSection({ recommendations }: { recommendations: WorkloadRecommendation[] }) {
+function RecommendationsSection({
+  recommendations,
+  showAll,
+}: {
+  recommendations: WorkloadRecommendation[];
+  showAll: boolean;
+}) {
+  const visibleRecommendations = showAll ? recommendations : recommendations.slice(0, MAX_VISIBLE_ITEMS);
+
   return (
     <View style={styles.section}>
       <ThemedText type="default" style={styles.sectionHeader}>
         Suggestions
       </ThemedText>
       <View style={{ gap: space.sm }}>
-        {recommendations.map((recommendation, index) => {
+        {visibleRecommendations.map((recommendation, index) => {
           const href = getRecommendationHref(recommendation);
           const content = (
             <>
@@ -391,7 +429,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.risk.high.bg,
     borderRadius: radius.pill,
     paddingHorizontal: space.sm,
-    paddingVertical: 2,
+    paddingVertical: space.xs,
   },
   strongBadgeText: {
     fontSize: typeTokens.caption.fontSize,
