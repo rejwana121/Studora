@@ -7,8 +7,8 @@
 
 export const color = {
   primary: {
-    violet: '#5D3FD3',
-    violetStrong: '#4A2FB0',
+    violet: '#6D28D9',
+    violetStrong: '#5B21B6',
   },
   secondary: {
     teal: '#14B8A6',
@@ -19,11 +19,11 @@ export const color = {
     coralStrong: '#C23A28',
     warmYellow: '#FFC94D',
     warmYellowText: '#96650F',
-    lavender: '#EDE7FB',
+    lavender: '#E4D9FA',
     mint: '#DFF5EC',
   },
   background: {
-    main: '#F7F4FC',
+    main: '#EFE8FB',
     card: '#FFFFFF',
   },
   text: {
@@ -54,8 +54,8 @@ export const color = {
 } as const;
 
 export const gradient = {
-  hero: ['#5D3FD3', '#14B8A6'] as const, // 135deg
-  premium: ['#4A2FB0', '#C23A28'] as const, // 135deg
+  hero: ['#6D28D9', '#14B8A6'] as const, // 135deg
+  premium: ['#5B21B6', '#C23A28'] as const, // 135deg
 };
 
 export const space = {
