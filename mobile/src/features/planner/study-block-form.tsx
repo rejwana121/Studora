@@ -128,7 +128,7 @@ export function StudyBlockForm({
 
       <Button label={submitLabel} onPress={handleSubmit} loading={isSubmitting} />
       {onDelete && (
-        <Button label="Delete" variant="secondary" onPress={handleDeletePress} loading={isDeleting} />
+        <Button label="Delete" variant="destructive" onPress={handleDeletePress} loading={isDeleting} />
       )}
 
       <TaskPickerModal

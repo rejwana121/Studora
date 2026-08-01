@@ -55,7 +55,7 @@ export function SessionCard({ token, focus }: SessionCardProps) {
   function handleFinish() {
     Alert.alert('Finish focus session?', 'This ends the session and records its total time.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Finish', style: 'destructive', onPress: () => focus.finish() },
+      { text: 'Finish', onPress: () => focus.finish() },
     ]);
   }
 

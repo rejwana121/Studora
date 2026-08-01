@@ -74,7 +74,7 @@ export default function SubjectsScreen() {
     }
     Alert.alert('Archive subject?', `"${subject.name}" will be hidden from active lists.`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Archive', style: 'destructive', onPress: () => applyArchiveChange(subject, true) },
+      { text: 'Archive', onPress: () => applyArchiveChange(subject, true) },
     ]);
   }
 

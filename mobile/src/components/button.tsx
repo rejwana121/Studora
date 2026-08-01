@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, type GestureResponderEvent } 
 import { ThemedText } from './themed-text';
 import { color, radius, touchTarget, type as typeTokens } from '@/design-system/tokens';
 
-type ButtonVariant = 'primary' | 'secondary' | 'text' | 'onGradient';
+type ButtonVariant = 'primary' | 'secondary' | 'text' | 'onGradient' | 'destructive';
 
 interface ButtonProps {
   label: string;
@@ -18,11 +18,13 @@ const LABEL_STYLE_BY_VARIANT = {
   secondary: 'secondaryLabel',
   text: 'secondaryLabel',
   onGradient: 'onGradientLabel',
+  destructive: 'destructiveLabel',
 } as const;
 
 export function Button({ label, onPress, variant = 'primary', disabled, loading }: ButtonProps) {
   const isDisabled = disabled || loading;
-  const spinnerColor = variant === 'primary' ? color.text.onFill : color.primary.violet;
+  const spinnerColor =
+    variant === 'primary' || variant === 'destructive' ? color.text.onFill : color.primary.violet;
 
   return (
     <Pressable
@@ -36,6 +38,7 @@ export function Button({ label, onPress, variant = 'primary', disabled, loading 
         variant === 'secondary' && styles.secondary,
         variant === 'text' && styles.text,
         variant === 'onGradient' && styles.onGradient,
+        variant === 'destructive' && styles.destructive,
         isDisabled && styles.disabled,
         pressed && !isDisabled && styles.pressed,
       ]}
@@ -83,6 +86,9 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: color.text.onFill,
   },
+  destructive: {
+    backgroundColor: color.accent.coralStrong,
+  },
   pressed: {
     opacity: 0.85,
   },
@@ -100,6 +106,11 @@ const styles = StyleSheet.create({
     fontWeight: typeTokens.label.fontWeight,
   },
   onGradientLabel: {
+    color: color.text.onFill,
+    fontSize: typeTokens.label.fontSize,
+    fontWeight: typeTokens.label.fontWeight,
+  },
+  destructiveLabel: {
     color: color.text.onFill,
     fontSize: typeTokens.label.fontSize,
     fontWeight: typeTokens.label.fontWeight,

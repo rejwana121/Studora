@@ -281,7 +281,7 @@ export default function TaskDetailsScreen() {
             loading={isBusy}
           />
           <Button label="Edit" variant="secondary" onPress={() => router.push(`/tasks/${task.id}/edit` as Href)} />
-          <Button label="Delete" variant="secondary" onPress={handleDeleteTask} />
+          <Button label="Delete" variant="destructive" onPress={handleDeleteTask} />
         </View>
       </ScrollView>
     </Screen>
