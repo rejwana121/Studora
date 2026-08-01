@@ -36,6 +36,11 @@ const FOCUS_HREF = '/focus' as Href;
 interface NotificationCoordinatorValue {
   permissionStatus: NotificationPermissionStatus | 'loading';
   requestPermission: () => Promise<void>;
+  /** Fire-and-forget: call right after a task create/edit/complete-or-
+   * reopen/delete succeeds while the app is foregrounded. Reuses the same
+   * fetch-then-diff reconcile the foreground-return listener already
+   * uses — no separate getTasksToday/reconcile logic per screen. */
+  requestDeadlineReconcile: () => void;
   /** Bumped once per foreground-received or tapped focus-break
    * notification whose ownership was verified against the current
    * authenticated user's actual session. The Focus screen watches this —
@@ -105,6 +110,15 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
   const userIdRef = useRef(userId);
   tokenRef.current = token;
   userIdRef.current = userId;
+  // Monotonic counter for every deadline-reconcile request (foreground-
+  // return, mutation-triggered, and the cold-start sweep) — a request
+  // captures its own value before its fetch starts, and may only apply
+  // the fetched result if it's still the latest one issued by the time
+  // the fetch resolves. Without this, a slower in-flight reconcile (e.g.
+  // triggered by the AppState foreground listener) could resolve AFTER a
+  // faster mutation-triggered one and overwrite its fresher result with
+  // stale data.
+  const deadlineReconcileSeqRef = useRef(0);
 
   const registerIntent = useCallback(() => {
     setFocusBreakIntentVersion((v) => v + 1);
@@ -194,12 +208,19 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
   // its own fresh GET /tasks/today rather than relying on any screen
   // having mounted (same philosophy as the break-alert sweep's own
   // independent listSessions call). Guarded by the same disposed/
-  // generation/user checks as every other async path here.
+  // generation/user checks as every other async path here, plus the
+  // sequence check: this call may be racing a newer one (foreground
+  // listener vs. a just-completed task mutation, or two rapid mutations),
+  // and only the request that's still current when its fetch resolves is
+  // allowed to apply — see deadlineReconcileSeqRef above.
   const runDeadlineReconcile = useCallback(async (force: boolean) => {
     const checkToken = tokenRef.current;
     const checkUserId = userIdRef.current;
     const gen = sweepGenerationRef.current;
     if (disposedRef.current || !checkToken || !checkUserId) return;
+
+    deadlineReconcileSeqRef.current += 1;
+    const mySeq = deadlineReconcileSeqRef.current;
 
     const [status, tasksResult] = await Promise.all([
       getNotificationPermissionStatus(),
@@ -209,10 +230,15 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
     if (disposedRef.current) return;
     if (sweepGenerationRef.current !== gen) return;
     if (userIdRef.current !== checkUserId) return;
+    if (deadlineReconcileSeqRef.current !== mySeq) return; // a newer reconcile request has since superseded this one
 
     if (!tasksResult.ok) return; // network/error — the next trigger retries
     await reconcileDeadlineNotificationSchedule(tasksResult.data.pending, status === 'granted', { force });
   }, []);
+
+  const requestDeadlineReconcile = useCallback(() => {
+    void runDeadlineReconcile(false);
+  }, [runDeadlineReconcile]);
 
   // Sole registrant of both listeners in the app — Focus consumes their
   // effect only through `focusBreakIntentVersion`, never by registering a
@@ -292,6 +318,8 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
     sweptForUserIdRef.current = userId;
     const gen = sweepGenerationRef.current;
     const capturedUserId = userId;
+    deadlineReconcileSeqRef.current += 1;
+    const mySeq = deadlineReconcileSeqRef.current;
 
     (async () => {
       if (disposedRef.current || sweepGenerationRef.current !== gen) return;
@@ -353,7 +381,9 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
       // per "still reconcile/cancel schedules for the actual current
       // user."
       await reconcileBreakNotificationSchedule(unfinished, status === 'granted', { force: true });
-      await reconcileDeadlineNotificationSchedule(pendingTasks, status === 'granted', { force: true });
+      if (deadlineReconcileSeqRef.current === mySeq) {
+        await reconcileDeadlineNotificationSchedule(pendingTasks, status === 'granted', { force: true });
+      }
     })();
   }, [token, userId, registerIntent]);
 
@@ -388,7 +418,7 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
 
   return (
     <NotificationCoordinatorContext.Provider
-      value={{ permissionStatus, requestPermission, focusBreakIntentVersion }}
+      value={{ permissionStatus, requestPermission, requestDeadlineReconcile, focusBreakIntentVersion }}
     >
       {children}
     </NotificationCoordinatorContext.Provider>

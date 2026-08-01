@@ -11,6 +11,7 @@ import { Screen } from '@/components/screen';
 import { TextField } from '@/components/text-field';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
+import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
 import {
   color,
   priorityColor,
@@ -38,6 +39,7 @@ function formatDeadline(iso: string): string {
 export default function TaskDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useSession();
+  const { requestDeadlineReconcile } = useNotificationCoordinator();
   const [task, setTask] = useState<Task | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -70,8 +72,12 @@ export default function TaskDetailsScreen() {
     const nextStatus = task.status === 'Completed' ? 'Pending' : 'Completed';
     const result = await updateTask(session.access_token, task.id, { status: nextStatus });
     setIsBusy(false);
-    if (result.ok) setTask(result.data);
-    else Alert.alert('Could not update task', result.error.message);
+    if (result.ok) {
+      setTask(result.data);
+      requestDeadlineReconcile();
+    } else {
+      Alert.alert('Could not update task', result.error.message);
+    }
   }
 
   function handleDeleteTask() {
@@ -87,8 +93,12 @@ export default function TaskDetailsScreen() {
     setIsBusy(true);
     const result = await deleteTask(session.access_token, task.id);
     setIsBusy(false);
-    if (result.ok) router.back();
-    else Alert.alert('Could not delete task', result.error.message);
+    if (result.ok) {
+      requestDeadlineReconcile();
+      router.back();
+    } else {
+      Alert.alert('Could not delete task', result.error.message);
+    }
   }
 
   async function handleToggleSubtask(subtaskId: string, isComplete: boolean) {

@@ -7,6 +7,7 @@ import { Banner } from '@/components/banner';
 import { Screen } from '@/components/screen';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
+import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
 import { TaskForm, type TaskFormValues } from '@/features/tasks/task-form';
 import { color, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
 import type { Task } from '@/types/api';
@@ -14,6 +15,7 @@ import type { Task } from '@/types/api';
 export default function EditTaskScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useSession();
+  const { requestDeadlineReconcile } = useNotificationCoordinator();
   const [task, setTask] = useState<Task | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,6 +46,7 @@ export default function EditTaskScreen() {
     const result = await updateTask(session.access_token, task.id, values);
     setIsSubmitting(false);
     if (!result.ok) return result.error.message;
+    requestDeadlineReconcile();
     router.back();
     return null;
   }

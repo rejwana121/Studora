@@ -6,11 +6,13 @@ import { createTask } from '@/api/tasks';
 import { Screen } from '@/components/screen';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
+import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
 import { TaskForm, type TaskFormValues } from '@/features/tasks/task-form';
 import { color, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
 
 export default function NewTaskScreen() {
   const { session } = useSession();
+  const { requestDeadlineReconcile } = useNotificationCoordinator();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(values: TaskFormValues): Promise<string | null> {
@@ -19,6 +21,7 @@ export default function NewTaskScreen() {
     const result = await createTask(session.access_token, values);
     setIsSubmitting(false);
     if (!result.ok) return result.error.message;
+    requestDeadlineReconcile();
     router.back();
     return null;
   }
