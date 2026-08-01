@@ -1,5 +1,5 @@
 import { router, useFocusEffect, type Href } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { getTasksToday } from '@/api/tasks';
@@ -48,7 +48,34 @@ export default function TodayScreen() {
     }, [load])
   );
 
-  const isEmpty = view && view.pending.length === 0;
+  // One-task-one-placement: each task_id renders in exactly one section,
+  // by precedence Overdue → Due Soon → High Priority → Pending — the
+  // backend's four groups are intentionally overlapping (a task can
+  // belong to several), so without this a task would render once per
+  // matching group. Filters (never mutates) each source group's own
+  // array, so within-group order from the API is preserved.
+  const sections = useMemo(() => {
+    if (!view) return null;
+    const seen = new Set<string>();
+    function placeInto(tasks: Task[]): Task[] {
+      const placed = tasks.filter((task) => !seen.has(task.id));
+      for (const task of placed) seen.add(task.id);
+      return placed;
+    }
+    return {
+      overdue: placeInto(view.overdue),
+      dueSoon: placeInto(view.due_soon),
+      highPriority: placeInto(view.high_priority),
+      pending: placeInto(view.pending),
+    };
+  }, [view]);
+
+  const isEmpty =
+    sections !== null &&
+    sections.overdue.length === 0 &&
+    sections.dueSoon.length === 0 &&
+    sections.highPriority.length === 0 &&
+    sections.pending.length === 0;
 
   return (
     <Screen style={styles.screen}>
@@ -89,15 +116,15 @@ export default function TodayScreen() {
         </ScrollView>
       )}
 
-      {!isLoading && !loadError && view && !isEmpty && (
+      {!isLoading && !loadError && sections && !isEmpty && (
         <ScrollView
           contentContainerStyle={styles.sections}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => load(true)} />}
         >
-          <Section title="Overdue" tasks={view.overdue} />
-          <Section title="Due soon (72h)" tasks={view.due_soon} />
-          <Section title="High priority" tasks={view.high_priority} />
-          <Section title="Pending" tasks={view.pending} />
+          <Section title="Overdue" tasks={sections.overdue} />
+          <Section title="Due soon (72h)" tasks={sections.dueSoon} />
+          <Section title="High priority" tasks={sections.highPriority} />
+          <Section title="Pending" tasks={sections.pending} />
         </ScrollView>
       )}
 
