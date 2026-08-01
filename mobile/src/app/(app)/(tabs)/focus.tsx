@@ -25,6 +25,11 @@ export default function FocusScreen() {
   // present — this is what makes an intent that fired before Focus
   // mounted still get consumed exactly once.
   const consumedIntentRef = useRef<number | null>(null);
+  // Same "never equals a real version" convention as consumedIntentRef —
+  // makes a finish that completed before this effect first ran still get
+  // consumed exactly once, and keeps the 0 sentinel from ever triggering
+  // a spurious history refresh on mount.
+  const consumedFinishRef = useRef<number | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -36,6 +41,16 @@ export default function FocusScreen() {
   useEffect(() => {
     if (focus.finishedElsewhereMessage) setHistoryRefreshKey((k) => k + 1);
   }, [focus.finishedElsewhereMessage]);
+
+  // Semantically separate from finishedElsewhereMessage above — this is
+  // specifically a finish completed on THIS device, never re-using the
+  // "elsewhere" copy/signal for a same-device event.
+  useEffect(() => {
+    if (consumedFinishRef.current === focus.finishedJustNowVersion) return;
+    consumedFinishRef.current = focus.finishedJustNowVersion;
+    if (focus.finishedJustNowVersion === 0) return; // 0 = no local finish has happened yet
+    setHistoryRefreshKey((k) => k + 1);
+  }, [focus.finishedJustNowVersion]);
 
   useEffect(() => {
     if (consumedIntentRef.current === focusBreakIntentVersion) return;

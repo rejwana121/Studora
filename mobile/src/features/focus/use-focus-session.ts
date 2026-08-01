@@ -47,6 +47,12 @@ export interface UseFocusSessionResult {
   retryNotificationSchedule: () => void;
   finishedElsewhereMessage: string | null;
   dismissFinishedElsewhereMessage: () => void;
+  /** Bumped once per confirmed same-device finish that actually
+   * succeeded — 0 is a "never fired" sentinel, never a real event (same
+   * convention as `focusBreakIntentVersion` in notification-coordinator).
+   * Semantically distinct from `finishedElsewhereMessage`, which is
+   * reserved for a session discovered finished on another device. */
+  finishedJustNowVersion: number;
   /** Mutation-priority-safe reconciliation trigger. Call this — never a
    * raw "GET /sessions" — from mount/focus, AppState-active, and the
    * internal 30s interval alike, so an in-flight mutation is never
@@ -75,6 +81,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   const [reconcileError, setReconcileError] = useState<string | null>(null);
   const [notificationScheduleError, setNotificationScheduleError] = useState<string | null>(null);
   const [finishedElsewhereMessage, setFinishedElsewhereMessage] = useState<string | null>(null);
+  const [finishedJustNowVersion, setFinishedJustNowVersion] = useState(0);
   const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
 
   const { permissionStatus } = useNotificationCoordinator();
@@ -297,7 +304,17 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
 
   const finish = useCallback(async () => {
     if (!token || !session) return;
-    const result = await runMutation(() => finishSession(token, session.id), (row) => applySnapshotAndSync(row, true));
+    // The response row's own `status` is always "Finished" here — never
+    // fed into current-session state (unlike start/pause/resume, whose
+    // rows genuinely ARE the new current session). Finishing always means
+    // "no current session," regardless of what the row contains.
+    const result = await runMutation(
+      () => finishSession(token, session.id),
+      () => {
+        applySnapshotAndSync(null, true);
+        setFinishedJustNowVersion((v) => v + 1);
+      }
+    );
     if (result && !result.ok) {
       setMutationError(result.error.message);
       await reconcileNow({ force: true });
@@ -424,6 +441,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
     retryNotificationSchedule,
     finishedElsewhereMessage,
     dismissFinishedElsewhereMessage,
+    finishedJustNowVersion,
     reconcile,
     start,
     pause,

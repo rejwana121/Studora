@@ -178,7 +178,7 @@ export function SessionCard({ token, focus }: SessionCardProps) {
         </View>
       ) : (
         <ThemedText type="default" style={styles.metaText}>
-          Unlinked focus session
+          General Focus
         </ThemedText>
       )}
 

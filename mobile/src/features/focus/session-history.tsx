@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { getProfile } from '@/api/profile';
@@ -12,12 +12,14 @@ import {
   radius,
   space,
   subjectColor,
+  touchTarget,
   type as typeTokens,
 } from '@/design-system/tokens';
 import { formatZonedDateTime } from '@/lib/date';
 import type { StudySessionRead } from '@/types/api';
 
 const PAGE_LIMIT = 20;
+const DEFAULT_VISIBLE_COUNT = 5;
 
 function formatDuration(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -51,6 +53,10 @@ export function SessionHistory({ token, refreshKey }: SessionHistoryProps) {
   const [isLoadingFirst, setIsLoadingFirst] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  // Purely local disclosure of already-loaded rows — never triggers a
+  // fetch. Reset to collapsed whenever the list itself is reset (see
+  // resetAndLoadFirstPage), so a refresh always starts short.
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const generationRef = useRef(0);
 
@@ -105,6 +111,7 @@ export function SessionHistory({ token, refreshKey }: SessionHistoryProps) {
     setNextOffset(0);
     setHasMore(true);
     setListError(null);
+    setIsExpanded(false);
     fetchPage(0);
   }, [fetchPage]);
 
@@ -122,6 +129,12 @@ export function SessionHistory({ token, refreshKey }: SessionHistoryProps) {
 
   const isFirstPageFailure = Boolean(listError) && nextOffset === 0 && sessions.length === 0;
   const isLaterPageFailure = Boolean(listError) && !isFirstPageFailure;
+
+  // Local-only slice of already-loaded sessions — "View more"/"Show less"
+  // never fetches; the server "Load more" pagination below is separate
+  // and only offered once the local view is already fully expanded.
+  const visibleSessions = isExpanded ? sessions : sessions.slice(0, DEFAULT_VISIBLE_COUNT);
+  const hasHiddenLocal = sessions.length > DEFAULT_VISIBLE_COUNT;
 
   return (
     <View style={styles.container}>
@@ -153,9 +166,24 @@ export function SessionHistory({ token, refreshKey }: SessionHistoryProps) {
             <EmptyState message="No finished sessions yet" />
           )}
 
-          {sessions.map((item) => (
-            <HistoryRow key={item.id} session={item} timezone={timezone} />
-          ))}
+          {sessions.length > 0 && (
+            <View style={styles.historyGroup}>
+              {visibleSessions.map((item, index) => (
+                <Fragment key={item.id}>
+                  <HistoryRow session={item} timezone={timezone} />
+                  {index < visibleSessions.length - 1 && <View style={styles.divider} />}
+                </Fragment>
+              ))}
+            </View>
+          )}
+
+          {hasHiddenLocal && (
+            <Button
+              label={isExpanded ? 'Show less' : 'View more'}
+              variant="text"
+              onPress={() => setIsExpanded((prev) => !prev)}
+            />
+          )}
 
           {isLoadingMore && <ActivityIndicator color={color.primary.violet} style={styles.loadingMore} />}
 
@@ -166,7 +194,7 @@ export function SessionHistory({ token, refreshKey }: SessionHistoryProps) {
             </View>
           )}
 
-          {!isLoadingFirst && !isLoadingMore && !listError && hasMore && sessions.length > 0 && (
+          {isExpanded && !isLoadingFirst && !isLoadingMore && !listError && hasMore && sessions.length > 0 && (
             <Button label="Load more" variant="secondary" onPress={() => fetchPage(nextOffset)} />
           )}
         </View>
@@ -176,31 +204,35 @@ export function SessionHistory({ token, refreshKey }: SessionHistoryProps) {
 }
 
 function HistoryRow({ session, timezone }: { session: StudySessionRead; timezone: string }) {
+  const dateTime = formatZonedDateTime(new Date(session.started_at), timezone);
+
   return (
     <View style={styles.row}>
       <View style={styles.rowContent}>
         <ThemedText type="default" style={styles.rowTitle} numberOfLines={1}>
-          {session.task ? session.task.title : 'Unlinked focus session'}
+          {session.task ? session.task.title : dateTime}
         </ThemedText>
-        <View style={styles.metaRow}>
-          {session.task?.subject && (
-            <View style={styles.subjectChip}>
-              <View
-                style={[
-                  styles.subjectDot,
-                  { backgroundColor: subjectColor[session.task.subject.color_token] },
-                ]}
-              />
-              <ThemedText type="default" style={styles.metaText}>
-                {session.task.subject.name}
-                {session.task.subject.archived ? ' (archived)' : ''}
-              </ThemedText>
-            </View>
-          )}
-          <ThemedText type="default" style={styles.metaText}>
-            {formatZonedDateTime(new Date(session.started_at), timezone)}
-          </ThemedText>
-        </View>
+        {session.task && (
+          <View style={styles.metaRow}>
+            {session.task.subject && (
+              <View style={styles.subjectChip}>
+                <View
+                  style={[
+                    styles.subjectDot,
+                    { backgroundColor: subjectColor[session.task.subject.color_token] },
+                  ]}
+                />
+                <ThemedText type="default" style={styles.metaText}>
+                  {session.task.subject.name}
+                  {session.task.subject.archived ? ' (archived)' : ''}
+                </ThemedText>
+              </View>
+            )}
+            <ThemedText type="default" style={styles.metaText}>
+              {dateTime}
+            </ThemedText>
+          </View>
+        )}
       </View>
       <ThemedText type="default" style={styles.duration}>
         {formatDuration(session.active_duration_seconds)}
@@ -228,13 +260,23 @@ const styles = StyleSheet.create({
   loadingMore: {
     marginVertical: space.sm,
   },
+  historyGroup: {
+    backgroundColor: color.background.card,
+    borderRadius: radius.card,
+    overflow: 'hidden',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: color.border.divider,
+    marginHorizontal: space.md,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
-    backgroundColor: color.background.card,
-    borderRadius: radius.card,
-    padding: space.md,
+    minHeight: touchTarget.min,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
   },
   rowContent: {
     flex: 1,
