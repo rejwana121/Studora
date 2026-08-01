@@ -126,7 +126,7 @@ export default function ProfileScreen() {
       </ThemedText>
 
       {isLoading && <ActivityIndicator color={color.primary.violet} />}
-      {loadError && <Banner variant="error" message={loadError} />}
+      {!isLoading && loadError && <Banner variant="error" message={loadError} />}
 
       {profile && (
         <>
