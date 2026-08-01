@@ -84,11 +84,36 @@ export default function TasksScreen() {
     );
   }, [tasks, segment, search]);
 
+  // Independent of the current segment/search selection — always a
+  // whole-list overview. "Need attention" reuses the exact same
+  // active+past-deadline condition the "Overdue" segment already applies
+  // (no new/invented criterion).
+  const summary = useMemo(() => {
+    if (!tasks) return null;
+    const now = Date.now();
+    let activeCount = 0;
+    let attentionCount = 0;
+    for (const task of tasks) {
+      const isActive = task.status === 'Pending' || task.status === 'InProgress';
+      if (!isActive) continue;
+      activeCount += 1;
+      if (new Date(task.deadline).getTime() < now) attentionCount += 1;
+    }
+    if (activeCount === 0) return 'No active tasks';
+    if (attentionCount === 0) return `${activeCount} active`;
+    return `${activeCount} active · ${attentionCount} need attention`;
+  }, [tasks]);
+
   return (
     <Screen style={styles.screen}>
       <ThemedText type="default" style={styles.title}>
         Tasks
       </ThemedText>
+      {summary && (
+        <ThemedText type="default" style={styles.summary}>
+          {summary}
+        </ThemedText>
+      )}
 
       <TextField label="Search" value={search} onChangeText={setSearch} placeholder="Search tasks" />
 
@@ -106,6 +131,7 @@ export default function TasksScreen() {
               <ThemedText
                 type="default"
                 style={[styles.segmentLabel, selected && styles.segmentLabelSelected]}
+                numberOfLines={1}
               >
                 {s.label}
               </ThemedText>
@@ -144,9 +170,14 @@ export default function TasksScreen() {
           data={filtered}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <TaskRow task={item} onPress={() => router.push(`/tasks/${item.id}` as Href)} />
+            <TaskRow
+              task={item}
+              variant="grouped"
+              onPress={() => router.push(`/tasks/${item.id}` as Href)}
+            />
           )}
-          ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
+          ItemSeparatorComponent={() => <View style={styles.divider} />}
+          ListFooterComponent={<View style={styles.listFooterSpacer} />}
           style={styles.listFlex}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => load(true)} />}
@@ -167,6 +198,10 @@ const styles = StyleSheet.create({
     lineHeight: typeTokens.display.lineHeight,
     fontWeight: '700',
     color: color.primary.violet,
+  },
+  summary: {
+    fontSize: typeTokens.caption.fontSize,
+    color: color.text.secondary,
   },
   segmentRow: {
     flexDirection: 'row',
@@ -197,6 +232,21 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   list: {
-    paddingBottom: space.xxl,
+    backgroundColor: color.background.card,
+    borderRadius: radius.card,
+    overflow: 'hidden',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: color.border.divider,
+    marginHorizontal: space.md,
+  },
+  // Rendered as the FlatList's own ListFooterComponent — deliberately
+  // painted in the page's own background (not transparent), so the FAB-
+  // clearance scroll space reads as page, not as trailing white space
+  // inside the grouped card above it.
+  listFooterSpacer: {
+    height: space.xxl,
+    backgroundColor: color.background.main,
   },
 });
