@@ -36,9 +36,22 @@ Copy `mobile/.env.example` to `mobile/.env` and fill in real values once a Supab
 cd backend
 python -m venv .venv                        # already created during scaffold
 ./.venv/Scripts/pip install -r requirements.txt   # (.venv/bin/pip on macOS/Linux)
+
+# Development (auto-reload, local only):
 ./.venv/Scripts/python -m uvicorn app.main:app --reload   # http://127.0.0.1:8000/health, /docs, /openapi.json
+
+# Production (binds all interfaces, respects the platform's $PORT; no --reload):
+./.venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
 ```
 Copy `backend/.env.example` to `backend/.env` and fill in real values once a Supabase project exists (see "Supabase project setup" below).
+
+### Deployment
+`backend/Procfile` defines the production web process (`uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}`) for platforms that read a Procfile (Heroku-style and several free-tier PaaS); ignored harmlessly by platforms that don't (e.g. a Docker-based deploy).
+
+Set these environment variables on the deployment platform — names only, never commit real values:
+- `DATABASE_URL`
+- `SUPABASE_URL`
+- `SUPABASE_LEGACY_JWT_SECRET` (optional — see `backend/.env.example`)
 
 ## Supabase project setup (needed for live auth testing)
 1. Create a free-tier project at supabase.com (no card required).
