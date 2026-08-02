@@ -137,15 +137,16 @@ export function TaskPickerModal({ visible, token, currentTask, onSelect, onClose
         accessibilityRole="button"
         accessibilityLabel={`${task.title}${task.subject?.archived ? ', archived subject' : ''}${
           deemphasized ? `, ${task.status}` : ''
-        }`}
+        }${isCurrent ? ', selected' : ''}`}
+        accessibilityState={{ selected: isCurrent }}
         onPress={() => handleSelect(task)}
-        style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+        style={({ pressed }) => [styles.row, isCurrent && styles.rowSelected, pressed && styles.rowPressed]}
       >
         <View style={styles.rowContent}>
           <ThemedText
             type="default"
             style={[styles.rowTitle, deemphasized && styles.rowTitleDeemphasized]}
-            numberOfLines={1}
+            numberOfLines={2}
           >
             {task.title}
           </ThemedText>
@@ -154,21 +155,21 @@ export function TaskPickerModal({ visible, token, currentTask, onSelect, onClose
               <View
                 style={[styles.subjectDot, { backgroundColor: subjectColor[task.subject.color_token] }]}
               />
-              <ThemedText type="default" style={styles.metaText}>
+              <ThemedText type="default" style={styles.metaText} numberOfLines={1}>
                 {task.subject.name}
                 {task.subject.archived ? ' (archived)' : ''}
               </ThemedText>
             </View>
           )}
           {deemphasized && (
-            <ThemedText type="default" style={styles.metaText}>
+            <ThemedText type="default" style={styles.metaText} numberOfLines={1}>
               {task.status}
             </ThemedText>
           )}
         </View>
         {isCurrent && (
-          <ThemedText type="default" style={styles.selectedBadge}>
-            Selected
+          <ThemedText type="default" style={styles.selectedCheckmark} accessibilityElementsHidden>
+            ✓
           </ThemedText>
         )}
       </Pressable>
@@ -209,20 +210,27 @@ export function TaskPickerModal({ visible, token, currentTask, onSelect, onClose
             <View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="No task"
+                accessibilityLabel={currentTask === null ? 'No task, selected' : 'No task'}
+                accessibilityState={{ selected: currentTask === null }}
                 onPress={() => handleSelect(null)}
-                style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+                style={({ pressed }) => [
+                  styles.row,
+                  currentTask === null && styles.rowSelected,
+                  pressed && styles.rowPressed,
+                ]}
               >
-                <ThemedText type="default" style={styles.rowTitle}>
+                <ThemedText type="default" style={styles.rowTitle} numberOfLines={1}>
                   No task
                 </ThemedText>
                 {currentTask === null && (
-                  <ThemedText type="default" style={styles.selectedBadge}>
-                    Selected
+                  <ThemedText type="default" style={styles.selectedCheckmark} accessibilityElementsHidden>
+                    ✓
                   </ThemedText>
                 )}
               </Pressable>
+              <View style={styles.divider} />
               {currentTask && renderTaskRow(currentTask, true)}
+              {currentTask && <View style={styles.divider} />}
               {isLoadingFirst && (
                 <ActivityIndicator color={color.primary.violet} style={styles.loadingSpacer} />
               )}
@@ -240,19 +248,23 @@ export function TaskPickerModal({ visible, token, currentTask, onSelect, onClose
             </View>
           }
           renderItem={({ item }) => renderTaskRow(item, false)}
-          ItemSeparatorComponent={() => <View style={{ height: space.xs }} />}
+          ItemSeparatorComponent={() => <View style={styles.divider} />}
           ListFooterComponent={
-            isLoadingMore ? (
-              <ActivityIndicator color={color.primary.violet} style={styles.loadingSpacer} />
-            ) : isLaterPageFailure && error ? (
-              <View style={styles.errorBlock}>
-                <Banner variant="error" message={error} />
-                <Button label="Retry" variant="secondary" onPress={handleRetry} />
-              </View>
-            ) : null
+            <View>
+              {(isLoadingMore || isLaterPageFailure) && <View style={styles.divider} />}
+              {isLoadingMore ? (
+                <ActivityIndicator color={color.primary.violet} style={styles.loadingSpacer} />
+              ) : isLaterPageFailure && error ? (
+                <View style={styles.errorBlock}>
+                  <Banner variant="error" message={error} />
+                  <Button label="Retry" variant="secondary" onPress={handleRetry} />
+                </View>
+              ) : null}
+            </View>
           }
           contentContainerStyle={styles.list}
         />
+        <View style={styles.footerSpacer} />
       </View>
     </Modal>
   );
@@ -290,7 +302,13 @@ const styles = StyleSheet.create({
     color: color.text.primary,
   },
   list: {
-    paddingBottom: space.xxl,
+    backgroundColor: color.background.card,
+    borderRadius: radius.card,
+    overflow: 'hidden',
+  },
+  footerSpacer: {
+    height: space.xxl,
+    backgroundColor: color.background.main,
   },
   loadingSpacer: {
     marginVertical: space.md,
@@ -298,22 +316,31 @@ const styles = StyleSheet.create({
   errorBlock: {
     gap: space.sm,
     marginVertical: space.sm,
+    paddingHorizontal: space.md,
   },
   emptyText: {
     fontSize: typeTokens.body.fontSize,
     color: color.text.secondary,
     textAlign: 'center',
     paddingVertical: space.md,
+    paddingHorizontal: space.md,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: color.border.divider,
+    marginHorizontal: space.md,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: space.sm,
     minHeight: touchTarget.min,
-    backgroundColor: color.background.card,
-    borderRadius: radius.card,
     paddingHorizontal: space.md,
     paddingVertical: space.sm,
+  },
+  rowSelected: {
+    backgroundColor: color.accent.lavender,
   },
   rowPressed: {
     opacity: 0.7,
@@ -345,9 +372,9 @@ const styles = StyleSheet.create({
     fontSize: typeTokens.caption.fontSize,
     color: color.text.secondary,
   },
-  selectedBadge: {
-    fontSize: typeTokens.caption.fontSize,
+  selectedCheckmark: {
+    fontSize: typeTokens.body.fontSize,
+    fontWeight: '700',
     color: color.primary.violet,
-    fontWeight: '600',
   },
 });
