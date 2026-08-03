@@ -8,9 +8,11 @@
     "scheme": "studora",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.rejwanaakter.studora"
     },
     "android": {
+      "package": "com.rejwanaakter.studora",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -35,7 +37,13 @@
       ],
       "expo-secure-store",
       "@react-native-community/datetimepicker",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "color": "#6D28D9",
+          "sounds": ["./assets/audio/studora_alert.wav"]
+        }
+      ],
       [
         "expo-audio",
         {

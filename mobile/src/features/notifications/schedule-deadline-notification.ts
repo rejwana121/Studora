@@ -4,7 +4,18 @@ import { Platform } from 'react-native';
 import type { Task } from '@/types/api';
 
 export const TASK_DEADLINE_NOTIFICATION_TYPE = 'task_deadline';
-export const TASK_DEADLINE_CHANNEL_ID = 'task-deadlines';
+// Versioned (v2, not the original 'task-deadlines'): Android notification
+// channels are immutable once created on a device — reusing the old id
+// would silently keep serving its original 'default' sound to anyone who
+// already has it, even after this file starts requesting a custom one. A
+// new id forces the OS to create a fresh channel with today's settings.
+export const TASK_DEADLINE_CHANNEL_ID = 'task-deadlines-v2';
+// Checkpoint 7D-1 proof asset — bundled via the expo-notifications config
+// plugin (see app.json `sounds`). Must exactly match that file's name
+// (extension included): iOS resolves it as a literal bundle resource name;
+// Android's SoundResolver strips the extension itself before the res/raw
+// lookup, so the same string works unmodified on both platforms.
+const TASK_DEADLINE_SOUND_FILE = 'studora_alert.wav';
 
 /** Checkpoint 6A frozen contract: fires exactly 1 hour before a task's
  * deadline, only for tasks whose deadline falls within the next 72 hours
@@ -101,7 +112,7 @@ async function ensureTaskDeadlineChannel(): Promise<void> {
   await Notifications.setNotificationChannelAsync(TASK_DEADLINE_CHANNEL_ID, {
     name: 'Task deadline reminders',
     importance: Notifications.AndroidImportance.MAX,
-    sound: 'default',
+    sound: TASK_DEADLINE_SOUND_FILE,
   });
   channelEnsured = true;
 }
@@ -178,7 +189,7 @@ async function applySchedule(
       content: {
         title: 'Deadline approaching',
         body: `${entry.title} is due in 1 hour.`,
-        sound: 'default',
+        sound: TASK_DEADLINE_SOUND_FILE,
         data,
       },
       trigger: {
