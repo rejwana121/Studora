@@ -39,7 +39,7 @@ function formatDeadline(iso: string): string {
 export default function TaskDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useSession();
-  const { requestDeadlineReconcile } = useNotificationCoordinator();
+  const { requestDeadlineReconcile, requestWorkloadCheck } = useNotificationCoordinator();
   const [task, setTask] = useState<Task | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -75,6 +75,7 @@ export default function TaskDetailsScreen() {
     if (result.ok) {
       setTask(result.data);
       requestDeadlineReconcile();
+      requestWorkloadCheck();
     } else {
       Alert.alert('Could not update task', result.error.message);
     }
@@ -95,6 +96,7 @@ export default function TaskDetailsScreen() {
     setIsBusy(false);
     if (result.ok) {
       requestDeadlineReconcile();
+      requestWorkloadCheck();
       router.back();
     } else {
       Alert.alert('Could not delete task', result.error.message);
@@ -106,8 +108,12 @@ export default function TaskDetailsScreen() {
     const result = await updateSubtask(session.access_token, task.id, subtaskId, {
       is_complete: isComplete,
     });
-    if (result.ok) load();
-    else Alert.alert('Could not update subtask', result.error.message);
+    if (result.ok) {
+      load();
+      requestWorkloadCheck();
+    } else {
+      Alert.alert('Could not update subtask', result.error.message);
+    }
   }
 
   function handleDeleteSubtask(subtaskId: string, title: string) {
@@ -119,8 +125,12 @@ export default function TaskDetailsScreen() {
         onPress: async () => {
           if (!session || !task) return;
           const result = await deleteSubtask(session.access_token, task.id, subtaskId);
-          if (result.ok) load();
-          else Alert.alert('Could not delete subtask', result.error.message);
+          if (result.ok) {
+            load();
+            requestWorkloadCheck();
+          } else {
+            Alert.alert('Could not delete subtask', result.error.message);
+          }
         },
       },
     ]);
@@ -134,6 +144,7 @@ export default function TaskDetailsScreen() {
     if (result.ok) {
       setNewSubtaskTitle('');
       load();
+      requestWorkloadCheck();
     } else {
       Alert.alert('Could not add subtask', result.error.message);
     }

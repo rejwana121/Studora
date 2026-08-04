@@ -13,6 +13,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import { getTask, getTasksToday } from '@/api/tasks';
 import { listSessions } from '@/api/sessions';
+import { getCurrentWorkload } from '@/api/workload';
 import { useSession } from '@/features/auth/session-context';
 
 import {
@@ -30,6 +31,12 @@ import {
   reconcileDeadlineNotificationSchedule,
   type TaskDeadlineNotificationData,
 } from './schedule-deadline-notification';
+import {
+  checkAndMaybeFireWorkloadAlert,
+  dismissWorkloadAlert,
+  isWorkloadAlertNotificationData,
+  type WorkloadAlertNotificationData,
+} from './workload-alert';
 
 const FOCUS_HREF = '/focus' as Href;
 
@@ -41,6 +48,13 @@ interface NotificationCoordinatorValue {
    * fetch-then-diff reconcile the foreground-return listener already
    * uses — no separate getTasksToday/reconcile logic per screen. */
   requestDeadlineReconcile: () => void;
+  /** Fire-and-forget: call right after a task/subtask/study-block
+   * create/edit/delete or a study-session finish/break-action succeeds
+   * while the app is foregrounded. Also runs on every foreground return
+   * and after a fresh permission grant. Always re-checks OS permission
+   * itself (never trusts a stale cached value) before deciding whether a
+   * qualifying transition may actually alert. */
+  requestWorkloadCheck: () => void;
   /** Bumped once per foreground-received or tapped focus-break
    * notification whose ownership was verified against the current
    * authenticated user's actual session. The Focus screen watches this —
@@ -60,9 +74,12 @@ export function useNotificationCoordinator(): NotificationCoordinatorValue {
   return value;
 }
 
-function notificationEventKey(data: FocusBreakNotificationData | TaskDeadlineNotificationData): string {
+function notificationEventKey(
+  data: FocusBreakNotificationData | TaskDeadlineNotificationData | WorkloadAlertNotificationData
+): string {
   if (isFocusBreakNotificationData(data)) return `focus_break:${data.session_id}:${data.eligible_at}`;
-  return `task_deadline:${data.task_id}:${data.deadline}`;
+  if (isTaskDeadlineNotificationData(data)) return `task_deadline:${data.task_id}:${data.deadline}`;
+  return `workload_alert:${data.evaluated_at}`;
 }
 
 // The foreground presentation handler (`setNotificationHandler`) is
@@ -141,10 +158,60 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
     };
   }, []);
 
+  // Workload-alert check — always re-queries OS permission fresh (never
+  // trusts the `permissionStatus` state alone, which is only otherwise
+  // refreshed on mount or by an explicit requestPermission() call and
+  // could go stale if the user flips it from OS Settings mid-session).
+  // getNotificationPermissionStatus() is a passive query only (never
+  // prompts). A failure here aborts the whole check rather than treating
+  // permission as either granted or denied — see workload-alert.ts's own
+  // no-permission handling for why treating a failure as "denied" would
+  // still be safe, but aborting is simplest and equally correct.
+  const runWorkloadCheck = useCallback(async () => {
+    const checkToken = tokenRef.current;
+    const checkUserId = userIdRef.current;
+    const gen = sweepGenerationRef.current;
+    if (disposedRef.current || !checkToken || !checkUserId) return;
+
+    let freshStatus: NotificationPermissionStatus;
+    try {
+      freshStatus = await getNotificationPermissionStatus();
+    } catch {
+      return;
+    }
+
+    if (disposedRef.current) return;
+    if (sweepGenerationRef.current !== gen) return;
+    if (userIdRef.current !== checkUserId) return;
+
+    setPermissionStatus((prev) => (prev === freshStatus ? prev : freshStatus));
+
+    const workloadResult = await getCurrentWorkload(checkToken);
+
+    if (disposedRef.current) return;
+    if (sweepGenerationRef.current !== gen) return;
+    if (userIdRef.current !== checkUserId) return;
+
+    if (!workloadResult.ok) return; // network/error — the next trigger retries
+
+    await checkAndMaybeFireWorkloadAlert(checkUserId, freshStatus === 'granted', workloadResult.data);
+  }, []);
+
+  const requestWorkloadCheck = useCallback(() => {
+    void runWorkloadCheck();
+  }, [runWorkloadCheck]);
+
   const requestPermission = useCallback(async () => {
     const status = await requestNotificationPermission();
     setPermissionStatus(status);
-  }, []);
+    if (status === 'granted') {
+      // A workload that's been sitting qualifying-but-unconsumed (because
+      // permission was missing at the time) must alert immediately once
+      // permission is granted, not wait for the next mutation/foreground
+      // event.
+      requestWorkloadCheck();
+    }
+  }, [requestWorkloadCheck]);
 
   // Ownership-verified intent emission for the LIVE listeners below. A
   // listener only has the notification's own data payload — it cannot
@@ -204,6 +271,20 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
     router.push(`/tasks/${data.task_id}` as Href);
   }, []);
 
+  // Tap-time navigation for a workload alert — unlike the two handlers
+  // above, this payload carries no per-resource id to re-verify against
+  // (deliberately: see workload-alert.ts's data-shape doc), so there is
+  // nothing to check beyond the dedup claim below. Navigating to
+  // /workload is safe for whichever user is currently signed in — that
+  // screen scopes its own GET by the current session's own token, never
+  // by anything in this payload. Registered on the TAP (response)
+  // listener only — never on the received/delivery listener, unlike
+  // focus-break/deadline's existing convention.
+  const handleWorkloadAlertTap = useCallback((data: WorkloadAlertNotificationData) => {
+    if (!claimNotificationEvent(notificationEventKey(data))) return; // duplicate received+response
+    router.push('/workload' as Href);
+  }, []);
+
   // Coordinator-owned deadline-schedule reconciliation — always fetches
   // its own fresh GET /tasks/today rather than relying on any screen
   // having mounted (same philosophy as the break-alert sweep's own
@@ -258,13 +339,16 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
         void verifyOwnershipAndRegisterIntent(data);
       } else if (isTaskDeadlineNotificationData(data)) {
         void verifyDeadlineOwnershipAndNavigate(data);
+      } else if (isWorkloadAlertNotificationData(data)) {
+        // Tap-only, deliberately absent from receivedSub above.
+        handleWorkloadAlertTap(data);
       }
     });
     return () => {
       receivedSub.remove();
       responseSub.remove();
     };
-  }, [verifyOwnershipAndRegisterIntent, verifyDeadlineOwnershipAndNavigate]);
+  }, [verifyOwnershipAndRegisterIntent, verifyDeadlineOwnershipAndNavigate, handleWorkloadAlertTap]);
 
   // Foreground-return reconciliation — deadlines have no dedicated screen
   // that's guaranteed mounted (unlike Focus's own AppState listener in
@@ -277,12 +361,13 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
     const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
       if (next === 'active') {
         void runDeadlineReconcile(true);
+        void runWorkloadCheck();
       }
     });
     return () => {
       subscription.remove();
     };
-  }, [runDeadlineReconcile]);
+  }, [runDeadlineReconcile, runWorkloadCheck]);
 
   // Cold-start sweep + account-switch guard, keyed on user identity (not
   // raw token — an access-token refresh for the SAME user must not
@@ -310,6 +395,9 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
         // must never survive into User B's session.
         void cancelAllBreakNotifications();
         void cancelAllDeadlineNotifications();
+        // Dismiss-only (never deletes the outgoing user's persisted
+        // workload-alert state — see workload-alert.ts's own doc on why).
+        void dismissWorkloadAlert(prevUserId);
       }
     }
 
@@ -373,6 +461,15 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
         }
         await Notifications.clearLastNotificationResponseAsync();
         if (disposedRef.current || sweepGenerationRef.current !== gen || userIdRef.current !== capturedUserId) return;
+      } else if (lastResponse && isWorkloadAlertNotificationData(responseData)) {
+        // No per-resource ownership check needed (see handleWorkloadAlertTap's
+        // doc) — navigating to /workload is safe for whichever user this
+        // cold-start sweep is running for.
+        if (claimNotificationEvent(notificationEventKey(responseData))) {
+          router.push('/workload' as Href);
+        }
+        await Notifications.clearLastNotificationResponseAsync();
+        if (disposedRef.current || sweepGenerationRef.current !== gen || userIdRef.current !== capturedUserId) return;
       }
 
       // Restart-safe schedule reconciliation from the fetches above —
@@ -384,8 +481,12 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
       if (deadlineReconcileSeqRef.current === mySeq) {
         await reconcileDeadlineNotificationSchedule(pendingTasks, status === 'granted', { force: true });
       }
+      // Workload has no shared in-flight sequence counter to check against
+      // (runWorkloadCheck guards itself independently via sweepGenerationRef/
+      // disposedRef/userIdRef) — safe to just trigger it here too.
+      void runWorkloadCheck();
     })();
-  }, [token, userId, registerIntent]);
+  }, [token, userId, registerIntent, runWorkloadCheck]);
 
   // Disposal — the primary sign-out path: this provider unmounts
   // entirely when `(app)/_layout.tsx` redirects on `!session`. Ordering
@@ -413,12 +514,18 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
       lastHandledNotificationKeyRef.current = null;
       void cancelAllBreakNotifications();
       void cancelAllDeadlineNotifications();
+      // Dismiss-only, never a state delete — userIdRef still holds the
+      // outgoing user's id (the provider unmounts without an intervening
+      // re-render that would have nulled it first; see (app)/_layout.tsx's
+      // `!session` redirect).
+      const outgoingUserId = userIdRef.current;
+      if (outgoingUserId) void dismissWorkloadAlert(outgoingUserId);
     };
   }, []);
 
   return (
     <NotificationCoordinatorContext.Provider
-      value={{ permissionStatus, requestPermission, requestDeadlineReconcile, focusBreakIntentVersion }}
+      value={{ permissionStatus, requestPermission, requestDeadlineReconcile, requestWorkloadCheck, focusBreakIntentVersion }}
     >
       {children}
     </NotificationCoordinatorContext.Provider>

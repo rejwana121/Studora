@@ -15,7 +15,7 @@ import type { Task } from '@/types/api';
 export default function EditTaskScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useSession();
-  const { requestDeadlineReconcile } = useNotificationCoordinator();
+  const { requestDeadlineReconcile, requestWorkloadCheck } = useNotificationCoordinator();
   const [task, setTask] = useState<Task | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,6 +47,7 @@ export default function EditTaskScreen() {
     setIsSubmitting(false);
     if (!result.ok) return result.error.message;
     requestDeadlineReconcile();
+    requestWorkloadCheck();
     router.back();
     return null;
   }

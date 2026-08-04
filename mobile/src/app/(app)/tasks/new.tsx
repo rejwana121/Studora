@@ -12,7 +12,7 @@ import { color, space, touchTarget, type as typeTokens } from '@/design-system/t
 
 export default function NewTaskScreen() {
   const { session } = useSession();
-  const { requestDeadlineReconcile } = useNotificationCoordinator();
+  const { requestDeadlineReconcile, requestWorkloadCheck } = useNotificationCoordinator();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(values: TaskFormValues): Promise<string | null> {
@@ -22,6 +22,7 @@ export default function NewTaskScreen() {
     setIsSubmitting(false);
     if (!result.ok) return result.error.message;
     requestDeadlineReconcile();
+    requestWorkloadCheck();
     router.back();
     return null;
   }

@@ -84,7 +84,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   const [finishedJustNowVersion, setFinishedJustNowVersion] = useState(0);
   const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
 
-  const { permissionStatus } = useNotificationCoordinator();
+  const { permissionStatus, requestWorkloadCheck } = useNotificationCoordinator();
   const permissionGranted = permissionStatus === 'granted';
   const permissionGrantedRef = useRef(permissionGranted);
 
@@ -313,13 +313,14 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
       () => {
         applySnapshotAndSync(null, true);
         setFinishedJustNowVersion((v) => v + 1);
+        requestWorkloadCheck();
       }
     );
     if (result && !result.ok) {
       setMutationError(result.error.message);
       await reconcileNow({ force: true });
     }
-  }, [token, session, runMutation, applySnapshotAndSync, reconcileNow]);
+  }, [token, session, runMutation, applySnapshotAndSync, reconcileNow, requestWorkloadCheck]);
 
   // --- break actions: NOT idempotent server-side (append-only event
   // log, no dedup) — an ambiguous network failure must never be resolved
@@ -333,7 +334,10 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
 
       const result = await runMutation(
         () => recordBreakAction(token, session.id, data),
-        (payload) => applySnapshotAndSync(payload.session, true)
+        (payload) => {
+          applySnapshotAndSync(payload.session, true);
+          requestWorkloadCheck();
+        }
       );
 
       if (!result) return 'superseded'; // a newer mutation started; this attempt's outcome no longer matters
@@ -368,7 +372,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
       }
       return 'resolved-no-retry'; // session no longer Active/unfinished — moot either way
     },
-    [token, session, runMutation, applySnapshotAndSync, reconcileNow]
+    [token, session, runMutation, applySnapshotAndSync, reconcileNow, requestWorkloadCheck]
   );
 
   const takeBreak = useCallback(

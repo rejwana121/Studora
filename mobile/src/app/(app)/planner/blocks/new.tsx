@@ -6,6 +6,7 @@ import { createStudyBlock } from '@/api/study-blocks';
 import { Screen } from '@/components/screen';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
+import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
 import { StudyBlockForm, type StudyBlockFormValues } from '@/features/planner/study-block-form';
 import { color, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
 
@@ -45,6 +46,7 @@ function computeDefaultStart(selectedDate: string): Date {
 export default function NewStudyBlockScreen() {
   const { date } = useLocalSearchParams<{ date: string }>();
   const { session } = useSession();
+  const { requestWorkloadCheck } = useNotificationCoordinator();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [defaults] = useState(() => {
@@ -59,6 +61,7 @@ export default function NewStudyBlockScreen() {
     const result = await createStudyBlock(session.access_token, values);
     setIsSubmitting(false);
     if (!result.ok) return result.error.message;
+    requestWorkloadCheck();
     router.back();
     return null;
   }

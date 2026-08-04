@@ -8,6 +8,7 @@ import { Banner } from '@/components/banner';
 import { Screen } from '@/components/screen';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
+import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
 import { StudyBlockForm, type StudyBlockFormValues } from '@/features/planner/study-block-form';
 import { color, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
 import type { StudyBlockRead } from '@/types/api';
@@ -15,6 +16,7 @@ import type { StudyBlockRead } from '@/types/api';
 export default function EditStudyBlockScreen() {
   const { id, date } = useLocalSearchParams<{ id: string; date: string }>();
   const { session } = useSession();
+  const { requestWorkloadCheck } = useNotificationCoordinator();
   const [block, setBlock] = useState<StudyBlockRead | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -73,6 +75,7 @@ export default function EditStudyBlockScreen() {
     const result = await updateStudyBlock(session.access_token, block.id, changes);
     setIsSubmitting(false);
     if (!result.ok) return result.error.message;
+    requestWorkloadCheck();
     router.back();
     return null;
   }
@@ -82,8 +85,12 @@ export default function EditStudyBlockScreen() {
     setIsDeleting(true);
     const result = await deleteStudyBlock(session.access_token, block.id);
     setIsDeleting(false);
-    if (result.ok) router.back();
-    else Alert.alert('Could not delete study block', result.error.message);
+    if (result.ok) {
+      requestWorkloadCheck();
+      router.back();
+    } else {
+      Alert.alert('Could not delete study block', result.error.message);
+    }
   }
 
   return (
