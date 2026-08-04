@@ -4,7 +4,17 @@ import { Platform } from 'react-native';
 import type { StudySessionRead } from '@/types/api';
 
 export const FOCUS_BREAK_NOTIFICATION_TYPE = 'focus_break';
-export const FOCUS_BREAK_CHANNEL_ID = 'focus-breaks';
+// v2: Android channel settings (including sound) are immutable once
+// created — an existing install's channel keeps its original sound
+// forever unless the channel id itself changes, so the id is bumped
+// here (same pattern as workload-alerts-v1) to actually apply the
+// switch from the OS default sound to studora_alert.wav.
+export const FOCUS_BREAK_CHANNEL_ID = 'focus-breaks-v2';
+
+// Reuses the already-bundled Checkpoint 7D-1 asset (already in app.json's
+// expo-notifications `sounds` array, already used by deadline and workload
+// alerts) — no new sound file, no app.json change.
+const FOCUS_BREAK_SOUND_FILE = 'studora_alert.wav';
 
 /** Payload contract (Checkpoint 9B, locked): exactly these three fields,
  * nothing that could leak private content (no token, email, task title,
@@ -74,7 +84,7 @@ export async function ensureFocusBreakChannel(): Promise<void> {
   await Notifications.setNotificationChannelAsync(FOCUS_BREAK_CHANNEL_ID, {
     name: 'Focus break reminders',
     importance: Notifications.AndroidImportance.MAX,
-    sound: 'default',
+    sound: FOCUS_BREAK_SOUND_FILE,
   });
 }
 
@@ -155,7 +165,7 @@ async function applySchedule(session: StudySessionRead | null, desired: string |
       content: {
         title: 'Time for a break?',
         body: "You've been studying for a while — take a moment when you're ready.",
-        sound: 'default',
+        sound: FOCUS_BREAK_SOUND_FILE,
         data,
       },
       trigger: {
