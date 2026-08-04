@@ -31,3 +31,11 @@ Every scheduled notification carries a `dedup_key` (e.g. `deadline:{task_id}:{wi
 
 ## 12.6 Honesty rule carried into every later phase
 No response may claim notification alerts are "done" until at least Tier 3 is demonstrated; Tier 4 (physical Android, sound/vibration, locked/killed state) is required before the feature is marked fully complete, and any gap is stated explicitly rather than implied. Studora never promises call-style continuous ringing (P6, explicit product boundary) — this is stated in UI copy and in the handoff limitations document.
+
+## 12.7 Checkpoint 7D-2 deferred follow-ups (workload alerts)
+Live-verified (PASS): qualifying High/Critical transition fires exactly one alert with correct tap deep link; repeated mutation/foregrounding while continuously qualifying produces no duplicate; state survives same-user sign-out/sign-in; a drop-then-re-cross within cooldown produces no alert. Two items remain **NOT TESTED** and are carried forward as follow-ups, not blockers, for the current 7D-2 implementation:
+
+- Re-alert after the full 4-hour cooldown (`COOLDOWN_MS`, §12.5) actually expires.
+- Different-account isolation on the same device (Account A's workload-alert state/notification never surfacing for Account B).
+
+Neither gap blocks 7D-2; per §12.6, they must be closed with actual observed evidence before workload alerts are reported as fully verified.
