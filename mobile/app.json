@@ -57,6 +57,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "e9a6ee43-f484-4b08-b2d0-88552f2fedfc"
+      }
+    },
+    "owner": "rejwana_043"
   }
 }
