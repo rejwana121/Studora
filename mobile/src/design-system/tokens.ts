@@ -26,6 +26,19 @@ export const color = {
     main: '#EFE8FB',
     card: '#FFFFFF',
   },
+  /** Reusable semantic neutral canvas — a cool-mist near-white, opt-in per
+   * screen as an alternative to the global lavender `background.main`
+   * where a screen needs purple to read as a controlled brand accent
+   * rather than an all-over page wash. Deliberately not applied to
+   * `background.main` itself, which every unreviewed screen still uses. */
+  surface: {
+    canvas: '#F7F7FB',
+    /** Soft periwinkle/mist header-banner tone — distinct from both
+     * `canvas` (near-neutral) and `background.main` (warmer lavender),
+     * much lighter than `accent.lavender`. Verified contrast: text.primary
+     * 15.1:1, text.secondary 6.0:1, primary.violet 6.2:1. */
+    headerSoft: '#ECEFFB',
+  },
   text: {
     primary: '#1B1730',
     secondary: '#5B5770',
