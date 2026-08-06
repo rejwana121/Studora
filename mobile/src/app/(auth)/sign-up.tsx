@@ -5,7 +5,6 @@ import { StyleSheet, View } from 'react-native';
 import { updateProfile } from '@/api/profile';
 import { AuthShell } from '@/components/auth-shell';
 import { Banner } from '@/components/banner';
-import { BrandBadge } from '@/components/brand-badge';
 import { Button } from '@/components/button';
 import { TextField } from '@/components/text-field';
 import { ThemedText } from '@/components/themed-text';
@@ -65,17 +64,22 @@ export default function SignUpScreen() {
   }
 
   return (
-    <AuthShell>
-      <BrandBadge />
-      <ThemedText type="default" style={styles.title}>
-        Sign Up
-      </ThemedText>
-      <ThemedText type="default" style={styles.subtitle}>
-        Create your space for calmer, smarter study planning.
-      </ThemedText>
-
-      {serverError && <Banner variant="error" message={serverError} />}
-      {infoMessage && <Banner variant="success" message={infoMessage} />}
+    <AuthShell
+      heroSource={require('../../../assets/images/studora-sign-up-hero.png')}
+      variant="signUp"
+      title="Create your account"
+      subtitle="Start planning university life with less stress."
+    >
+      {serverError && (
+        <View style={styles.bannerWrap}>
+          <Banner variant="error" message={serverError} />
+        </View>
+      )}
+      {infoMessage && (
+        <View style={styles.bannerWrap}>
+          <Banner variant="success" message={infoMessage} />
+        </View>
+      )}
 
       <View style={styles.form}>
         <TextField
@@ -86,6 +90,8 @@ export default function SignUpScreen() {
           keyboardType="email-address"
           autoCapitalize="none"
           autoComplete="email"
+          icon="mail-outline"
+          density="auth"
         />
         <TextField
           label="Password"
@@ -94,6 +100,9 @@ export default function SignUpScreen() {
           error={fieldErrors.password}
           secureTextEntry
           autoComplete="new-password"
+          icon="lock-closed-outline"
+          showPasswordToggle
+          density="auth"
         />
         <TextField
           label="Confirm password"
@@ -102,10 +111,15 @@ export default function SignUpScreen() {
           error={fieldErrors.confirmPassword}
           secureTextEntry
           autoComplete="new-password"
+          icon="shield-checkmark-outline"
+          showPasswordToggle
+          density="auth"
         />
       </View>
 
-      <Button label="Create Account" onPress={handleSubmit} loading={isSubmitting} />
+      <View style={styles.buttonWrap}>
+        <Button label="Create Account" onPress={handleSubmit} loading={isSubmitting} />
+      </View>
 
       <Link href="/(auth)/sign-in" style={styles.link}>
         <ThemedText type="default" style={styles.linkText}>
@@ -117,25 +131,19 @@ export default function SignUpScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: {
-    fontSize: typeTokens.display.fontSize,
-    lineHeight: typeTokens.display.lineHeight,
-    fontWeight: '700',
-    color: color.text.primary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: typeTokens.body.fontSize,
-    lineHeight: typeTokens.body.lineHeight,
-    color: color.text.secondary,
-    textAlign: 'center',
+  bannerWrap: {
+    marginBottom: space.sm,
   },
   form: {
-    gap: space.md,
+    gap: 11,
+  },
+  buttonWrap: {
+    marginTop: 16,
   },
   link: {
     alignSelf: 'center',
     paddingVertical: space.sm,
+    marginTop: 10,
   },
   linkText: {
     color: color.primary.violet,

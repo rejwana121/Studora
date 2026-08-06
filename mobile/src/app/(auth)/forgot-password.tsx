@@ -4,7 +4,6 @@ import { StyleSheet, View } from 'react-native';
 
 import { AuthShell } from '@/components/auth-shell';
 import { Banner } from '@/components/banner';
-import { BrandBadge } from '@/components/brand-badge';
 import { Button } from '@/components/button';
 import { TextField } from '@/components/text-field';
 import { ThemedText } from '@/components/themed-text';
@@ -40,18 +39,22 @@ export default function ForgotPasswordScreen() {
   }
 
   return (
-    <AuthShell>
-      <BrandBadge />
-      <ThemedText type="default" style={styles.title}>
-        Forgot Password
-      </ThemedText>
-      <ThemedText type="default" style={styles.subtitle}>
-        Enter your email and we&apos;ll send a reset link via Supabase&apos;s default recovery
-        flow.
-      </ThemedText>
-
-      {serverError && <Banner variant="error" message={serverError} />}
-      {infoMessage && <Banner variant="success" message={infoMessage} />}
+    <AuthShell
+      heroSource={require('../../../assets/images/studora-reset-password-hero.png')}
+      variant="resetPassword"
+      title="Reset password"
+      subtitle="We'll send a reset link to your email."
+    >
+      {serverError && (
+        <View style={styles.bannerWrap}>
+          <Banner variant="error" message={serverError} />
+        </View>
+      )}
+      {infoMessage && (
+        <View style={styles.bannerWrap}>
+          <Banner variant="success" message={infoMessage} />
+        </View>
+      )}
 
       <View style={styles.form}>
         <TextField
@@ -62,10 +65,14 @@ export default function ForgotPasswordScreen() {
           keyboardType="email-address"
           autoCapitalize="none"
           autoComplete="email"
+          icon="mail-outline"
+          density="auth"
         />
       </View>
 
-      <Button label="Send Reset Link" onPress={handleSubmit} loading={isSubmitting} />
+      <View style={styles.buttonWrap}>
+        <Button label="Send Reset Link" onPress={handleSubmit} loading={isSubmitting} />
+      </View>
 
       <Link href="/(auth)/sign-in" style={styles.link}>
         <ThemedText type="default" style={styles.linkText}>
@@ -77,25 +84,19 @@ export default function ForgotPasswordScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: {
-    fontSize: typeTokens.display.fontSize,
-    lineHeight: typeTokens.display.lineHeight,
-    fontWeight: '700',
-    color: color.text.primary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    color: color.text.secondary,
-    fontSize: typeTokens.body.fontSize,
-    lineHeight: typeTokens.body.lineHeight,
-    textAlign: 'center',
+  bannerWrap: {
+    marginBottom: space.md,
   },
   form: {
     gap: space.md,
   },
+  buttonWrap: {
+    marginTop: 20,
+  },
   link: {
     alignSelf: 'center',
     paddingVertical: space.sm,
+    marginTop: 12,
   },
   linkText: {
     color: color.primary.violet,

@@ -4,7 +4,6 @@ import { StyleSheet, View } from 'react-native';
 
 import { AuthShell } from '@/components/auth-shell';
 import { Banner } from '@/components/banner';
-import { BrandBadge } from '@/components/brand-badge';
 import { Button } from '@/components/button';
 import { TextField } from '@/components/text-field';
 import { ThemedText } from '@/components/themed-text';
@@ -38,16 +37,17 @@ export default function SignInScreen() {
   }
 
   return (
-    <AuthShell>
-      <BrandBadge />
-      <ThemedText type="default" style={styles.title}>
-        Sign In
-      </ThemedText>
-      <ThemedText type="default" style={styles.subtitle}>
-        Welcome back—let&apos;s make today manageable.
-      </ThemedText>
-
-      {serverError && <Banner variant="error" message={serverError} />}
+    <AuthShell
+      heroSource={require('../../../assets/images/studora-sign-in-hero.png')}
+      variant="signIn"
+      title="Welcome back"
+      subtitle="Sign in to continue your study plan."
+    >
+      {serverError && (
+        <View style={styles.bannerWrap}>
+          <Banner variant="error" message={serverError} />
+        </View>
+      )}
 
       <View style={styles.form}>
         <TextField
@@ -58,6 +58,8 @@ export default function SignInScreen() {
           keyboardType="email-address"
           autoCapitalize="none"
           autoComplete="email"
+          icon="mail-outline"
+          density="auth"
         />
         <TextField
           label="Password"
@@ -66,16 +68,21 @@ export default function SignInScreen() {
           error={fieldErrors.password}
           secureTextEntry
           autoComplete="password"
+          icon="lock-closed-outline"
+          showPasswordToggle
+          density="auth"
         />
+        <Link href="/(auth)/forgot-password" style={styles.forgotLink}>
+          <ThemedText type="default" style={styles.forgotLinkText}>
+            Forgot password?
+          </ThemedText>
+        </Link>
       </View>
 
-      <Button label="Sign In" onPress={handleSubmit} loading={isSubmitting} />
+      <View style={styles.buttonWrap}>
+        <Button label="Sign In" onPress={handleSubmit} loading={isSubmitting} />
+      </View>
 
-      <Link href="/(auth)/forgot-password" style={styles.link}>
-        <ThemedText type="default" style={styles.linkText}>
-          Forgot password?
-        </ThemedText>
-      </Link>
       <Link href="/(auth)/sign-up" style={styles.link}>
         <ThemedText type="default" style={styles.linkText}>
           New here? Create an account
@@ -86,25 +93,26 @@ export default function SignInScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: {
-    fontSize: typeTokens.display.fontSize,
-    lineHeight: typeTokens.display.lineHeight,
-    fontWeight: '700',
-    color: color.text.primary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: typeTokens.body.fontSize,
-    lineHeight: typeTokens.body.lineHeight,
-    color: color.text.secondary,
-    textAlign: 'center',
+  bannerWrap: {
+    marginBottom: space.md,
   },
   form: {
-    gap: space.md,
+    gap: 14,
+  },
+  forgotLink: {
+    alignSelf: 'flex-end',
+  },
+  forgotLinkText: {
+    color: color.primary.violet,
+    fontSize: typeTokens.label.fontSize,
+  },
+  buttonWrap: {
+    marginTop: 20,
   },
   link: {
     alignSelf: 'center',
     paddingVertical: space.sm,
+    marginTop: 12,
   },
   linkText: {
     color: color.primary.violet,
