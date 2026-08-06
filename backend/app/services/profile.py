@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from sqlmodel import Session
 
+from app.core.errors import ApiError
 from app.models.profile import Profile
 from app.schemas.profile import ProfileUpdate
 
@@ -30,6 +31,22 @@ def get_or_create_profile(
 
 def update_profile(session: Session, profile: Profile, changes: ProfileUpdate) -> Profile:
     data = changes.model_dump(exclude_unset=True)
+
+    # Identity comes only from `profile.id`, itself derived server-side from
+    # the verified JWT (see get_or_create_profile) — the client never
+    # supplies a user id. `avatar_path` already passed shape validation in
+    # ProfileUpdate; this is the sole ownership check, run here because this
+    # is the only place the authenticated user's own id is available.
+    if "avatar_path" in data and data["avatar_path"] is not None:
+        expected_path = f"{profile.id}/avatar"
+        if data["avatar_path"] != expected_path:
+            raise ApiError(
+                422,
+                "VALIDATION_ERROR",
+                "avatar_path must be the authenticated user's own avatar path",
+                field="avatar_path",
+            )
+
     for field, value in data.items():
         setattr(profile, field, value)
     profile.updated_at = datetime.now(UTC)

@@ -18,6 +18,7 @@ class Profile(SQLModel, table=True):
     id: uuid.UUID = Field(primary_key=True)
     display_name: str | None = Field(default=None)
     timezone: str = Field(default="UTC", nullable=False)
+    avatar_path: str | None = Field(default=None)
     study_preferences: dict | None = Field(
         default=None,
         sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True),
