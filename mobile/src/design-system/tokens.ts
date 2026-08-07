@@ -38,6 +38,13 @@ export const color = {
      * much lighter than `accent.lavender`. Verified contrast: text.primary
      * 15.1:1, text.secondary 6.0:1, primary.violet 6.2:1. */
     headerSoft: '#ECEFFB',
+    /** Saturated periwinkle-blue banner tone for the Profile header only —
+     * sampled directly from the approved Profile reference (measured
+     * ~#C5CCFC). Deliberately its own token rather than a `headerSoft`
+     * edit: `headerSoft` is shared with Today's header and must stay
+     * untouched. Verified contrast: text.primary 11.3:1, text.secondary
+     * 4.5:1, primary.violet 4.6:1. */
+    profileHeader: '#C7CEFC',
   },
   text: {
     primary: '#1B1730',

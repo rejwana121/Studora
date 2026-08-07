@@ -12,20 +12,28 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: ApiError['error']; status: number };
 
-/** Mirrors docs/phase1/09-data-dictionary.md §9.1. */
+/** Mirrors docs/phase1/09-data-dictionary.md §9.1. `avatar_path` is a
+ * stable Storage object key (e.g. `{user_id}/avatar`), never a signed URL —
+ * signed URLs expire, so the mobile client generates one on demand from
+ * this path (see features/profile/avatar-storage.ts). */
 export interface Profile {
   id: string;
   display_name: string | null;
   timezone: string;
   study_preferences: Record<string, unknown> | null;
+  avatar_path: string | null;
   created_at: string;
   updated_at: string;
 }
 
+/** `avatar_path: null` clears the stored photo path. Any non-null value
+ * must be exactly `${authenticatedUserId}/avatar` — the backend rejects
+ * anything else (see backend/app/schemas/profile.py). */
 export interface ProfileUpdate {
   display_name?: string;
   timezone?: string;
   study_preferences?: Record<string, unknown>;
+  avatar_path?: string | null;
 }
 
 /** Mirrors docs/phase1/09-data-dictionary.md §9.2 / app/schemas/subject.py. */

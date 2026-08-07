@@ -52,6 +52,14 @@
           "enableBackgroundRecording": false
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Studora uses your photo library so you can choose a profile photo.",
+          "cameraPermission": "Studora uses your camera so you can take a profile photo.",
+          "microphonePermission": false
+        }
+      ],
       "expo-asset"
     ],
     "experiments": {

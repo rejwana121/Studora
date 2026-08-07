@@ -23,7 +23,7 @@ function getGreeting(): string {
 }
 
 export default function TodayScreen() {
-  const { session } = useSession();
+  const { session, profile, avatarSignedUrl } = useSession();
   const [view, setView] = useState<TaskTodayView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -126,7 +126,7 @@ export default function TodayScreen() {
               onPress={() => router.push('/profile' as Href)}
               style={({ pressed }) => [styles.avatarButton, pressed && styles.pressedFade]}
             >
-              <Avatar label={session.user.email} size={40} />
+              <Avatar label={profile?.display_name ?? session.user.email} uri={avatarSignedUrl} size={40} />
             </Pressable>
           )}
         </View>
