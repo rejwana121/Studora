@@ -55,7 +55,7 @@ const styles = StyleSheet.create({
   },
   tile: {
     flex: 1,
-    minHeight: 76,
+    minHeight: 82,
     alignItems: 'flex-start',
     justifyContent: 'center',
     gap: 2,
@@ -70,5 +70,6 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: typeTokens.caption.fontSize,
+    lineHeight: typeTokens.caption.lineHeight,
   },
 });
