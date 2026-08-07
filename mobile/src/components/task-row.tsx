@@ -1,13 +1,18 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
+import { Icon } from './icon';
 import { ThemedText } from './themed-text';
 import {
   color,
+  elevation,
+  priorityBadgeTone,
   priorityColor,
   radius,
+  shadowStyle,
   space,
   subjectColor,
   taskTypeColor,
+  taskTypeIcon,
   touchTarget,
   type as typeTokens,
 } from '@/design-system/tokens';
@@ -28,21 +33,42 @@ function formatDeadline(iso: string): string {
   )}`;
 }
 
+function formatDueBadge(iso: string): string {
+  const date = new Date(iso);
+  return `Due ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+}
+
 interface TaskRowProps {
   task: Task;
   onPress: () => void;
   /** "card" (default): standalone row with its own background/radius —
-   * unchanged behavior for every existing caller (e.g. Today). "grouped":
-   * a simplified hierarchy for use inside an external bounded container
-   * that owns the shared background/radius/dividers (e.g. the Tasks
-   * list) — one priority accent (left), one status glyph (right); no
-   * type dot, no subject dot. */
+   * unchanged behavior for every existing caller (Today does not import
+   * this component at all — its own TodayTaskRow is independent — so this
+   * variant currently has no live caller; kept as-is regardless). "grouped":
+   * the Tasks-list card presentation used below. */
   variant?: 'card' | 'grouped';
+  /** "grouped" only. Toggles complete/reopen directly from the list —
+   * reuses the exact same `updateTask(..., { status })` call Task Detail's
+   * own Complete/Reopen button already makes; this only wires a second
+   * entry point to it, no new API behavior. Omit to render the completion
+   * control as a non-interactive (disabled) indicator. */
+  onToggleComplete?: () => void;
+  /** "grouped" only. True while this row's own toggle request is in
+   * flight — disables the control and shows a spinner in place of the
+   * glyph, preventing a duplicate tap from firing a second request. */
+  isTogglingComplete?: boolean;
 }
 
-export function TaskRow({ task, onPress, variant = 'card' }: TaskRowProps) {
+export function TaskRow({ task, onPress, variant = 'card', onToggleComplete, isTogglingComplete }: TaskRowProps) {
   if (variant === 'grouped') {
-    return <GroupedTaskRow task={task} onPress={onPress} />;
+    return (
+      <GroupedTaskRow
+        task={task}
+        onPress={onPress}
+        onToggleComplete={onToggleComplete}
+        isTogglingComplete={isTogglingComplete}
+      />
+    );
   }
 
   return (
@@ -82,56 +108,104 @@ export function TaskRow({ task, onPress, variant = 'card' }: TaskRowProps) {
   );
 }
 
-/** Simplified hierarchy for the grouped Tasks-list presentation: one
- * priority accent (left, existing priority colors, same dot convention
- * already used elsewhere in the app) plus title/subject/priority+deadline
- * stacked (primary/secondary/tertiary), and one status glyph (right, the
- * existing circle/check meaning) — no type dot, no subject dot. Priority
- * is never color-only: the accent is paired with a full readable label
- * ("High priority", never an abbreviation) on the tertiary line. Overdue
- * reuses the exact active+past-deadline condition the segment filter
- * already applies, surfaced as a readable "Overdue" word (not just a
- * color change) using the existing risk/high color; completed tasks mute
- * and strike through the title, mirroring the subtask-completion
- * treatment already used on the task detail screen. */
-function GroupedTaskRow({ task, onPress }: { task: Task; onPress: () => void }) {
+/** Tasks-list card: type icon badge (left), title/subject/deadline+priority
+ * badges (center), large completion control (right) — matching the
+ * approved Tasks reference. A coral left accent marks an active,
+ * past-deadline task (same `isActive && deadline < now` condition the
+ * segment filter and Today's own row already use — no new "overdue" rule
+ * invented here). Overdue is never colour-only: the deadline badge itself
+ * swaps its text to the word "Overdue", not just its tint — stricter than
+ * the reference image (which relies on the badge's coral tint alone), kept
+ * this way to match this app's existing "never colour alone" convention
+ * (see Today's TodayTaskRow doc comment). */
+function GroupedTaskRow({
+  task,
+  onPress,
+  onToggleComplete,
+  isTogglingComplete,
+}: {
+  task: Task;
+  onPress: () => void;
+  onToggleComplete?: () => void;
+  isTogglingComplete?: boolean;
+}) {
   const isActive = task.status === 'Pending' || task.status === 'InProgress';
   const isOverdue = isActive && new Date(task.deadline).getTime() < Date.now();
   const isCompleted = task.status === 'Completed';
-  const priorityLabel = `${task.priority} priority`;
-  const deadlineLabel = isOverdue ? 'Overdue' : formatDeadline(task.deadline);
+  const deadlineLabel = isOverdue ? 'Overdue' : formatDueBadge(task.deadline);
+  const deadlineTone = isOverdue
+    ? { bg: color.risk.high.bg, text: color.risk.high.text }
+    : { bg: color.accent.lavender, text: color.primary.violet };
+  const priorityTone = priorityBadgeTone[task.priority];
+  const subjectLabel = task.subject
+    ? `${task.subject.name}${task.subject.archived ? ' (archived)' : ''}`
+    : null;
+  const rowAccessibilityLabel = `${task.title}${subjectLabel ? `, ${subjectLabel}` : ''}, ${task.priority} priority, ${deadlineLabel}${isCompleted ? ', completed' : ''}`;
+  const toggleDisabled = !onToggleComplete || isTogglingComplete;
 
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={rowAccessibilityLabel}
       onPress={onPress}
-      style={({ pressed }) => [styles.groupedRow, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.cardOuter, pressed && styles.pressed]}
     >
-      <View style={[styles.priorityAccent, { backgroundColor: priorityColor[task.priority] }]} />
-      <View style={styles.groupedContent}>
-        <ThemedText
-          type="default"
-          style={[styles.title, isCompleted && styles.titleCompleted]}
-          numberOfLines={1}
-        >
-          {task.title}
-        </ThemedText>
-        {task.subject && (
-          <ThemedText type="default" style={styles.metaText} numberOfLines={1}>
-            {task.subject.name}
+      <View style={styles.cardInner}>
+        {isOverdue && <View style={styles.accentBar} />}
+        <View style={styles.typeBadge}>
+          <Icon name={taskTypeIcon[task.type]} size="md" color={color.primary.violet} />
+        </View>
+        <View style={styles.cardBody}>
+          <ThemedText
+            type="default"
+            style={[styles.title, isCompleted && styles.titleCompleted]}
+            numberOfLines={1}
+          >
+            {task.title}
           </ThemedText>
-        )}
-        <ThemedText
-          type="default"
-          style={[styles.metaText, isOverdue && styles.metaTextOverdue]}
-          numberOfLines={1}
+          {subjectLabel && (
+            <ThemedText type="default" style={styles.subject} numberOfLines={1}>
+              {subjectLabel}
+            </ThemedText>
+          )}
+          <View style={styles.badgeRow}>
+            <View style={[styles.badge, { backgroundColor: deadlineTone.bg }]}>
+              <Icon name="calendar-outline" size="sm" color={deadlineTone.text} />
+              <ThemedText type="default" style={[styles.badgeText, { color: deadlineTone.text }]} numberOfLines={1}>
+                {deadlineLabel}
+              </ThemedText>
+            </View>
+            <View style={[styles.badge, { backgroundColor: priorityTone.bg }]}>
+              <Icon name="flag-outline" size="sm" color={priorityTone.text} />
+              <ThemedText type="default" style={[styles.badgeText, { color: priorityTone.text }]} numberOfLines={1}>
+                {task.priority}
+              </ThemedText>
+            </View>
+          </View>
+        </View>
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: isCompleted, disabled: toggleDisabled }}
+          accessibilityLabel={isCompleted ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}
+          disabled={toggleDisabled}
+          hitSlop={space.xs}
+          onPress={(event) => {
+            event.stopPropagation();
+            onToggleComplete?.();
+          }}
+          style={styles.completionControl}
         >
-          {priorityLabel} · {deadlineLabel}
-        </ThemedText>
+          {isTogglingComplete ? (
+            <ActivityIndicator size="small" color={color.primary.violet} />
+          ) : (
+            <Icon
+              name={isCompleted ? 'checkmark-circle' : 'ellipse-outline'}
+              size="lg"
+              color={isCompleted ? color.primary.violet : color.text.secondary}
+            />
+          )}
+        </Pressable>
       </View>
-      <ThemedText type="default" style={styles.statusGlyph}>
-        {STATUS_GLYPH[task.status]}
-      </ThemedText>
     </Pressable>
   );
 }
@@ -145,14 +219,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.card,
     padding: space.md,
   },
-  groupedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    minHeight: touchTarget.min,
-  },
   pressed: {
     opacity: 0.7,
   },
@@ -161,16 +227,7 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: radius.pill,
   },
-  priorityAccent: {
-    width: 10,
-    height: 10,
-    borderRadius: radius.pill,
-  },
   content: {
-    flex: 1,
-    gap: space.xs,
-  },
-  groupedContent: {
     flex: 1,
     gap: space.xs,
   },
@@ -192,9 +249,6 @@ const styles = StyleSheet.create({
   metaText: {
     fontSize: typeTokens.caption.fontSize,
     color: color.text.secondary,
-  },
-  metaTextOverdue: {
-    color: color.risk.high.text,
   },
   subjectChip: {
     flexDirection: 'row',
@@ -218,5 +272,74 @@ const styles = StyleSheet.create({
   statusGlyph: {
     fontSize: typeTokens.caption.fontSize,
     color: color.text.secondary,
+  },
+  // --- "grouped" (Tasks-list card) styles ---
+  // Shadow lives on the outer Pressable, never on `cardInner` — `cardInner`
+  // needs `overflow: hidden` so the accent bar's square corners get
+  // clipped to the card's own rounded corners, and overflow:hidden on the
+  // same view as a shadow clips the shadow too (see Avatar's identical
+  // two-layer split).
+  cardOuter: {
+    borderRadius: radius.card,
+    ...shadowStyle(elevation.card),
+  },
+  cardInner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    backgroundColor: color.background.card,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: color.border.divider,
+    padding: space.md,
+    overflow: 'hidden',
+  },
+  accentBar: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+    backgroundColor: color.accent.coral,
+  },
+  typeBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.control,
+    backgroundColor: color.accent.lavender,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardBody: {
+    flex: 1,
+    gap: space.xs,
+  },
+  subject: {
+    fontSize: typeTokens.caption.fontSize,
+    color: color.text.secondary,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.xs,
+    marginTop: 2,
+  },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  badgeText: {
+    fontSize: typeTokens.caption.fontSize,
+    fontWeight: '600',
+  },
+  completionControl: {
+    minWidth: touchTarget.min,
+    minHeight: touchTarget.min,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

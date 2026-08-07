@@ -6,17 +6,23 @@ import { color, elevation, radius, shadowStyle, space } from '@/design-system/to
 interface FabProps {
   onPress: () => void;
   accessibilityLabel: string;
+  /** Distance from the screen's bottom edge. Defaults to `space.lg` — the
+   * exact value every existing caller (Subjects, Planner) already got
+   * implicitly, so omitting this prop is byte-for-byte unchanged. Tasks
+   * passes a safe-area-inset-aware value instead, so the FAB never sits
+   * flush against a gesture-nav bar. */
+  bottomOffset?: number;
 }
 
 /** Floating "+" action button — bottom-right, per the Tasks/Subjects
  * wireframes' "[+] Add ..." floating action. */
-export function Fab({ onPress, accessibilityLabel }: FabProps) {
+export function Fab({ onPress, accessibilityLabel, bottomOffset = space.lg }: FabProps) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
-      style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.fab, { bottom: bottomOffset }, pressed && styles.pressed]}
     >
       <ThemedText type="default" style={styles.icon}>
         +
@@ -29,7 +35,6 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: space.lg,
-    bottom: space.lg,
     width: 56,
     height: 56,
     borderRadius: radius.pill,

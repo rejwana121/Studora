@@ -12,9 +12,14 @@ export default function AppLayout() {
     <NotificationCoordinatorProvider>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="tasks/new" options={{ presentation: 'modal' }} />
+        {/* Tasks-only: 'fullScreenModal' instead of the other modal routes'
+         * 'modal' (iOS page-sheet — rounded corners, dimmed page peeking
+         * around the edges), per the approved Tasks reference's full-screen
+         * presentation. Every other modal route below is deliberately left
+         * on 'modal' — this does not change their presentation. */}
+        <Stack.Screen name="tasks/new" options={{ presentation: 'fullScreenModal' }} />
         <Stack.Screen name="tasks/[id]/index" />
-        <Stack.Screen name="tasks/[id]/edit" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="tasks/[id]/edit" options={{ presentation: 'fullScreenModal' }} />
         <Stack.Screen name="subjects/new" options={{ presentation: 'modal' }} />
         <Stack.Screen name="subjects/[id]/edit" options={{ presentation: 'modal' }} />
         <Stack.Screen name="planner/blocks/new" options={{ presentation: 'modal' }} />

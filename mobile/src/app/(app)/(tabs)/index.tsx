@@ -1,7 +1,7 @@
 import { router, useFocusEffect, type Href } from 'expo-router';
 import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getTasksToday } from '@/api/tasks';
 import { Avatar } from '@/components/avatar';
@@ -24,6 +24,7 @@ function getGreeting(): string {
 
 export default function TodayScreen() {
   const { session, profile, avatarSignedUrl } = useSession();
+  const insets = useSafeAreaInsets();
   const [view, setView] = useState<TaskTodayView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -111,8 +112,18 @@ export default function TodayScreen() {
     // Composing the same SafeAreaView locally, with `surface.canvas`
     // instead, fixes that without touching the shared component (which
     // every other screen still relies on).
-    <SafeAreaView style={styles.outerSafeArea}>
-      <View style={styles.headerSurface}>
+    //
+    // `edges` excludes 'top' deliberately: SafeAreaView's own background
+    // (canvas) would otherwise paint the top safe-area/status-bar strip,
+    // producing a second seam — this time canvas-above-periwinkle — right
+    // above `headerSurface`. Instead `headerSurface` itself absorbs
+    // `insets.top` into its own paddingTop below, so its periwinkle
+    // background extends continuously through the status bar. This moves
+    // the same inset from one element to another; it does not add a
+    // second one, and the header's visible height/content position is
+    // unchanged.
+    <SafeAreaView style={styles.outerSafeArea} edges={['left', 'right', 'bottom']}>
+      <View style={[styles.headerSurface, { paddingTop: insets.top + space.sm }]}>
         <View style={[styles.headerDecor, styles.headerDecorB]} pointerEvents="none" />
 
         <View style={styles.headerTopRow}>
@@ -313,7 +324,8 @@ const styles = StyleSheet.create({
   headerSurface: {
     backgroundColor: color.surface.headerSoft,
     paddingHorizontal: space.lg,
-    paddingTop: space.sm,
+    // paddingTop is set inline (insets.top + space.sm) — see the render's
+    // comment on why the SafeAreaView above excludes the 'top' edge.
     paddingBottom: space.xl,
     borderBottomLeftRadius: radius.card,
     borderBottomRightRadius: radius.card,

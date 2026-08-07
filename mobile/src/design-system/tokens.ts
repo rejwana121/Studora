@@ -4,6 +4,9 @@
  * docs/phase1/06-design-tokens.md (the approved Phase 1 visual system).
  * No screen may hardcode a raw colour/spacing value — import from here.
  */
+import type { Ionicons } from '@expo/vector-icons';
+
+type IconName = keyof typeof Ionicons.glyphMap;
 
 export const color = {
   primary: {
@@ -157,12 +160,49 @@ export const taskTypeLabel = {
   Other: 'Other',
 } as const;
 
-/** Priority dot colour — always render with the text label alongside, never colour alone. */
+/** Task type -> Ionicon glyph, for Tasks' type badges (card list + detail).
+ * Deterministic and exhaustive over every `TaskType` value — never
+ * partial. Badge background/icon tint is deliberately uniform across all
+ * nine types (`accent.lavender`/`primary.violet`, the same pairing
+ * Profile's row icons already use) rather than one new pale-tint token per
+ * type: the approved reference itself renders every type badge in this
+ * same single tone and differentiates types by glyph alone. */
+export const taskTypeIcon: Record<
+  'Assignment' | 'Quiz' | 'Project' | 'Presentation' | 'Lab' | 'Midterm' | 'FinalExam' | 'StudySession' | 'Other',
+  IconName
+> = {
+  Assignment: 'clipboard-outline',
+  Quiz: 'help-circle-outline',
+  Project: 'briefcase-outline',
+  Presentation: 'easel-outline',
+  Lab: 'flask-outline',
+  Midterm: 'school-outline',
+  FinalExam: 'ribbon-outline',
+  StudySession: 'library-outline',
+  Other: 'ellipsis-horizontal-circle-outline',
+};
+
+/** Priority dot colour — always render with the text label alongside, never colour alone.
+ * Consumed by Planner's day-agenda.tsx as well as Tasks — do not repoint its
+ * values; Tasks' own pill badges use the separate `priorityBadgeTone` below
+ * instead of touching this one. */
 export const priorityColor = {
   Low: color.accent.mint,
   Medium: color.accent.warmYellow,
   High: color.accent.coral,
 } as const;
+
+/** Priority -> pill-badge tone (bg + text), for Tasks' card/detail badges
+ * only — deliberately not a change to `priorityColor` above, which
+ * Planner's day-agenda.tsx also reads for its own dot indicator. Reuses
+ * existing semantic tokens: Low -> risk.low (calm), Medium -> info (teal,
+ * matches the approved Tasks reference exactly), High -> risk.high (coral,
+ * the same "high severity" tone used everywhere else in the app). */
+export const priorityBadgeTone: Record<'Low' | 'Medium' | 'High', { bg: string; text: string }> = {
+  Low: { bg: color.risk.low.bg, text: color.risk.low.text },
+  Medium: { bg: color.info.bg, text: color.info.text },
+  High: { bg: color.risk.high.bg, text: color.risk.high.text },
+};
 
 /** Subject colour token -> swatch, per docs/Studora_PRD_Compact_Final.md §12
  * ("Deep violet, teal, coral, warm yellow, lavender and mint") and
@@ -189,7 +229,9 @@ export const tokens = {
   type,
   taskTypeColor,
   taskTypeLabel,
+  taskTypeIcon,
   priorityColor,
+  priorityBadgeTone,
   subjectColor,
   riskLevelTokens,
 };
