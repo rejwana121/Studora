@@ -1,9 +1,8 @@
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { color, radius, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
-import { monthGridDates, monthLabel } from '@/lib/date';
+import { monthGridDates } from '@/lib/date';
 
 const WEEKDAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
@@ -15,7 +14,6 @@ interface MonthGridProps {
   taskDates: Set<string>;
   blockDates: Set<string>;
   onSelectDate: (date: string) => void;
-  onChangeMonth: (year: number, month: number) => void;
 }
 
 function monthOf(date: string): string {
@@ -37,6 +35,12 @@ function zonedLabel(date: string): string {
   });
 }
 
+/** Grid only — the month label + prev/next controls live in Planner's
+ * periwinkle header instead (per the approved reference, which shows the
+ * navigator on the header surface and only the weekday/date grid inside
+ * the white calendar card). `onChangeMonth` moved with them; Planner
+ * calls its own handlers directly. Single consumer (Planner tab), so
+ * this shape change carries no other caller. */
 export function MonthGrid({
   year,
   month,
@@ -45,49 +49,14 @@ export function MonthGrid({
   taskDates,
   blockDates,
   onSelectDate,
-  onChangeMonth,
 }: MonthGridProps) {
   const cells = monthGridDates(year, month);
   const currentMonthKey = `${year}-${String(month).padStart(2, '0')}`;
   const weeks: string[][] = [];
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
 
-  function goPrevMonth() {
-    if (month === 1) onChangeMonth(year - 1, 12);
-    else onChangeMonth(year, month - 1);
-  }
-
-  function goNextMonth() {
-    if (month === 12) onChangeMonth(year + 1, 1);
-    else onChangeMonth(year, month + 1);
-  }
-
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Previous month"
-          onPress={goPrevMonth}
-          style={styles.navButton}
-          hitSlop={space.xs}
-        >
-          <Ionicons name="chevron-back" size={22} color={color.primary.violet} />
-        </Pressable>
-        <ThemedText type="default" style={styles.monthLabel}>
-          {monthLabel(year, month)}
-        </ThemedText>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Next month"
-          onPress={goNextMonth}
-          style={styles.navButton}
-          hitSlop={space.xs}
-        >
-          <Ionicons name="chevron-forward" size={22} color={color.primary.violet} />
-        </Pressable>
-      </View>
-
       <View style={styles.weekdayRow}>
         {WEEKDAY_LABELS.map((label, i) => (
           <ThemedText key={i} type="default" style={styles.weekdayLabel}>
@@ -155,23 +124,6 @@ const styles = StyleSheet.create({
   container: {
     gap: space.xs,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  navButton: {
-    minWidth: touchTarget.min,
-    minHeight: touchTarget.min,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  monthLabel: {
-    fontSize: typeTokens.subheading.fontSize,
-    lineHeight: typeTokens.subheading.lineHeight,
-    fontWeight: '600',
-    color: color.text.primary,
-  },
   weekdayRow: {
     flexDirection: 'row',
   },
@@ -191,7 +143,11 @@ const styles = StyleSheet.create({
     minHeight: touchTarget.min,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radius.control,
+    // `radius.pill` (not `radius.control`) — the approved reference shows
+    // the selected date as a true circle, not a rounded square. Harmless
+    // on every unselected cell too, since those have no background to
+    // reveal the corner radius.
+    borderRadius: radius.pill,
     gap: 2,
   },
   cellSelected: {

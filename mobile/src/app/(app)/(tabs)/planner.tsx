@@ -1,34 +1,51 @@
 import { router, useFocusEffect, type Href } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getCalendar, getDay } from '@/api/planner';
 import { getProfile, updateProfile } from '@/api/profile';
 import { Banner } from '@/components/banner';
 import { Button } from '@/components/button';
 import { Fab } from '@/components/fab';
-import { Screen } from '@/components/screen';
+import { Icon } from '@/components/icon';
+import { SectionCard } from '@/components/section-card';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
 import { DayAgenda } from '@/features/planner/day-agenda';
 import { MonthGrid } from '@/features/planner/month-grid';
 import { WeekAgenda } from '@/features/planner/week-agenda';
-import { color, radius, space, type as typeTokens } from '@/design-system/tokens';
+import { color, radius, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
 import {
   addDaysToDateString,
   mondayOfWeekContaining,
   monthGridDates,
+  monthLabel,
   toZonedDateString,
   zonedDateRange,
   zonedDatesForBlock,
 } from '@/lib/date';
-import type { CalendarResponse, DayView, Profile, StudyBlockRead } from '@/types/api';
+import type { CalendarResponse, DayView, PlannerTaskItem, Profile, StudyBlockRead } from '@/types/api';
 
 type Mode = 'day' | 'week';
+
+/** Selected date is a pure YYYY-MM-DD string — formatted the same
+ * UTC-anchored way MonthGrid's own `zonedLabel` already does, so the
+ * heading can never drift a day from the grid's own selected cell. */
+function formatDayHeading(dateString: string): string {
+  const [y, m, d] = dateString.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
 
 export default function PlannerScreen() {
   const { session } = useSession();
   const token = session?.access_token ?? null;
+  const insets = useSafeAreaInsets();
   const deviceTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
 
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -219,6 +236,24 @@ export default function PlannerScreen() {
     }
   }
 
+  function goPrevMonth() {
+    if (visibleMonth === 1) {
+      setVisibleYear(visibleYear - 1);
+      setVisibleMonth(12);
+    } else {
+      setVisibleMonth(visibleMonth - 1);
+    }
+  }
+
+  function goNextMonth() {
+    if (visibleMonth === 12) {
+      setVisibleYear(visibleYear + 1);
+      setVisibleMonth(1);
+    } else {
+      setVisibleMonth(visibleMonth + 1);
+    }
+  }
+
   function goToNewBlock() {
     if (!selectedDate) return;
     router.push(`/planner/blocks/new?date=${selectedDate}` as Href);
@@ -228,131 +263,226 @@ export default function PlannerScreen() {
     router.push(`/planner/blocks/${block.id}/edit?date=${date}` as Href);
   }
 
+  function goToTask(task: PlannerTaskItem) {
+    router.push(`/tasks/${task.id}` as Href);
+  }
+
+  const headerInner = (
+    <>
+      <ThemedText type="default" style={styles.headerTitle}>
+        Planner
+      </ThemedText>
+      <View style={styles.monthNavRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Previous month"
+          onPress={goPrevMonth}
+          style={styles.navButton}
+          hitSlop={space.xs}
+        >
+          <Icon name="chevron-back" size="md" color={color.primary.violet} />
+        </Pressable>
+        <ThemedText type="default" style={styles.monthLabel}>
+          {monthLabel(visibleYear, visibleMonth)}
+        </ThemedText>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Next month"
+          onPress={goNextMonth}
+          style={styles.navButton}
+          hitSlop={space.xs}
+        >
+          <Icon name="chevron-forward" size="md" color={color.primary.violet} />
+        </Pressable>
+      </View>
+    </>
+  );
+
+  // `edges` excludes 'top': SafeAreaView's own canvas background would
+  // otherwise paint the status-bar strip a different colour than
+  // `headerSurface`'s periwinkle. `headerSurface` absorbs `insets.top`
+  // into its own paddingTop instead, so the periwinkle extends
+  // continuously through the status bar — same pattern Today/Tasks
+  // already use, applied here to fix Planner's previous plain-`Screen`
+  // (single flat `background.main`, no header surface at all).
   if (isProfileLoading) {
     return (
-      <Screen>
-        <ThemedText type="default" style={styles.title}>
-          Planner
-        </ThemedText>
-        <ActivityIndicator color={color.primary.violet} />
-      </Screen>
+      <SafeAreaView style={styles.outerSafeArea} edges={['left', 'right', 'bottom']}>
+        <View style={[styles.headerSurface, { paddingTop: insets.top + space.sm }]}>{headerInner}</View>
+        <View style={styles.bodyColumn}>
+          <ActivityIndicator color={color.primary.violet} />
+        </View>
+      </SafeAreaView>
     );
   }
 
   if (profileError) {
     return (
-      <Screen>
-        <ThemedText type="default" style={styles.title}>
-          Planner
-        </ThemedText>
-        <Banner variant="error" message={profileError} />
-        <Button label="Retry" variant="secondary" onPress={loadProfile} />
-      </Screen>
+      <SafeAreaView style={styles.outerSafeArea} edges={['left', 'right', 'bottom']}>
+        <View style={[styles.headerSurface, { paddingTop: insets.top + space.sm }]}>{headerInner}</View>
+        <View style={styles.bodyColumn}>
+          <Banner variant="error" message={profileError} />
+          <Button label="Retry" variant="secondary" onPress={loadProfile} />
+        </View>
+      </SafeAreaView>
     );
   }
 
   if (profile && !isAligned) {
     return (
-      <Screen>
-        <ThemedText type="default" style={styles.title}>
-          Planner
-        </ThemedText>
-        <Banner
-          variant="warning"
-          message={`Planner needs your profile timezone to match this device's timezone for correct calendar dates and times. Your profile is set to ${profile.timezone}, but this device is set to ${deviceTimezone}.`}
-        />
-        {alignError && <Banner variant="error" message={alignError} />}
-        <Button label="Use device timezone" onPress={handleAlignTimezone} loading={isAligning} />
-      </Screen>
+      <SafeAreaView style={styles.outerSafeArea} edges={['left', 'right', 'bottom']}>
+        <View style={[styles.headerSurface, { paddingTop: insets.top + space.sm }]}>{headerInner}</View>
+        <View style={styles.bodyColumn}>
+          <Banner
+            variant="warning"
+            message={`Planner needs your profile timezone to match this device's timezone for correct calendar dates and times. Your profile is set to ${profile.timezone}, but this device is set to ${deviceTimezone}.`}
+          />
+          {alignError && <Banner variant="error" message={alignError} />}
+          <Button label="Use device timezone" onPress={handleAlignTimezone} loading={isAligning} />
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <Screen style={styles.screen}>
-      <ThemedText type="default" style={styles.title}>
-        Planner
-      </ThemedText>
+    <SafeAreaView style={styles.outerSafeArea} edges={['left', 'right', 'bottom']}>
+      <View style={[styles.headerSurface, { paddingTop: insets.top + space.sm }]}>{headerInner}</View>
 
-      {monthError && <Banner variant="error" message={monthError} />}
+      <View style={styles.bodyColumn}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {monthError && <Banner variant="error" message={monthError} />}
 
-      <MonthGrid
-        year={visibleYear}
-        month={visibleMonth}
-        selectedDate={selectedDate ?? ''}
-        todayDate={profile ? toZonedDateString(new Date(), profile.timezone) : ''}
-        taskDates={taskDates}
-        blockDates={blockDates}
-        onSelectDate={handleSelectDate}
-        onChangeMonth={(y, m) => {
-          setVisibleYear(y);
-          setVisibleMonth(m);
-        }}
-      />
+          <SectionCard variant="default" style={styles.calendarCard}>
+            <MonthGrid
+              year={visibleYear}
+              month={visibleMonth}
+              selectedDate={selectedDate ?? ''}
+              todayDate={profile ? toZonedDateString(new Date(), profile.timezone) : ''}
+              taskDates={taskDates}
+              blockDates={blockDates}
+              onSelectDate={handleSelectDate}
+            />
+          </SectionCard>
 
-      <View style={styles.modeRow}>
-        {(['day', 'week'] as Mode[]).map((m) => {
-          const selected = m === mode;
-          return (
-            <Pressable
-              key={m}
-              accessibilityRole="button"
-              accessibilityLabel={m === 'day' ? 'Day view' : 'Week view'}
-              accessibilityState={{ selected }}
-              onPress={() => setMode(m)}
-              style={[styles.modeSegment, selected && styles.modeSegmentSelected]}
-            >
-              <ThemedText
-                type="default"
-                style={[styles.modeLabel, selected && styles.modeLabelSelected]}
-              >
-                {m === 'day' ? 'Day' : 'Week'}
-              </ThemedText>
-            </Pressable>
-          );
-        })}
+          <View style={styles.modeRow}>
+            {(['day', 'week'] as Mode[]).map((m) => {
+              const selected = m === mode;
+              return (
+                <Pressable
+                  key={m}
+                  accessibilityRole="button"
+                  accessibilityLabel={m === 'day' ? 'Day view' : 'Week view'}
+                  accessibilityState={{ selected }}
+                  onPress={() => setMode(m)}
+                  style={[styles.modeSegment, selected && styles.modeSegmentSelected]}
+                >
+                  <ThemedText
+                    type="default"
+                    style={[styles.modeLabel, selected && styles.modeLabelSelected]}
+                  >
+                    {m === 'day' ? 'Day' : 'Week'}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {mode === 'day' && selectedDate && (
+            <ThemedText type="default" style={styles.dayHeading}>
+              {formatDayHeading(selectedDate)}
+            </ThemedText>
+          )}
+
+          {mode === 'day' && (
+            <DayAgenda
+              tasks={dayView?.tasks ?? []}
+              studyBlocks={dayView?.study_blocks ?? []}
+              isLoading={isDayLoading}
+              error={dayError}
+              onRetry={() => loadDay()}
+              onRefresh={() => loadDay(true)}
+              isRefreshing={isDayRefreshing}
+              onSelectBlock={(block) => selectedDate && goToEditBlock(block, selectedDate)}
+              onSelectTask={goToTask}
+            />
+          )}
+
+          {mode === 'week' && profile && (
+            <WeekAgenda
+              dates={weekDates}
+              calendar={weekCalendar}
+              timeZone={profile.timezone}
+              isLoading={isWeekLoading}
+              error={weekError}
+              onRetry={() => loadWeek()}
+              onRefresh={() => loadWeek(true)}
+              isRefreshing={isWeekRefreshing}
+              onSelectBlock={goToEditBlock}
+              onSelectTask={goToTask}
+            />
+          )}
+        </ScrollView>
       </View>
 
-      {mode === 'day' && (
-        <DayAgenda
-          tasks={dayView?.tasks ?? []}
-          studyBlocks={dayView?.study_blocks ?? []}
-          isLoading={isDayLoading}
-          error={dayError}
-          onRetry={() => loadDay()}
-          onRefresh={() => loadDay(true)}
-          isRefreshing={isDayRefreshing}
-          onSelectBlock={(block) => selectedDate && goToEditBlock(block, selectedDate)}
-        />
-      )}
-
-      {mode === 'week' && profile && (
-        <WeekAgenda
-          dates={weekDates}
-          calendar={weekCalendar}
-          timeZone={profile.timezone}
-          isLoading={isWeekLoading}
-          error={weekError}
-          onRetry={() => loadWeek()}
-          onRefresh={() => loadWeek(true)}
-          isRefreshing={isWeekRefreshing}
-          onSelectBlock={goToEditBlock}
-        />
-      )}
-
-      <Fab accessibilityLabel="Add study block" onPress={goToNewBlock} />
-    </Screen>
+      <Fab
+        accessibilityLabel="Add study block"
+        onPress={goToNewBlock}
+        bottomOffset={insets.bottom + space.lg}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    position: 'relative',
+  outerSafeArea: {
+    flex: 1,
+    backgroundColor: color.surface.canvas,
   },
-  title: {
+  headerSurface: {
+    backgroundColor: color.surface.headerSoft,
+    paddingHorizontal: space.lg,
+    // paddingTop is set inline (insets.top + space.sm) — see the render's
+    // comment on why the SafeAreaView above excludes the 'top' edge.
+    paddingBottom: space.md,
+    borderBottomLeftRadius: radius.card,
+    borderBottomRightRadius: radius.card,
+    gap: space.sm,
+  },
+  headerTitle: {
     fontSize: typeTokens.display.fontSize,
     lineHeight: typeTokens.display.lineHeight,
     fontWeight: '700',
-    color: color.primary.violet,
+    color: color.text.primary,
+  },
+  monthNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  navButton: {
+    minWidth: touchTarget.min,
+    minHeight: touchTarget.min,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  monthLabel: {
+    fontSize: typeTokens.subheading.fontSize,
+    lineHeight: typeTokens.subheading.lineHeight,
+    fontWeight: '700',
+    color: color.text.primary,
+  },
+  bodyColumn: {
+    flex: 1,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    gap: space.md,
+  },
+  scrollContent: {
+    gap: space.md,
+    paddingBottom: space.xxl,
+  },
+  calendarCard: {
+    padding: space.sm,
   },
   modeRow: {
     flexDirection: 'row',
@@ -364,16 +494,25 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: 'center',
     backgroundColor: color.background.card,
+    borderWidth: 1,
+    borderColor: color.border.divider,
   },
   modeSegmentSelected: {
     backgroundColor: color.primary.violet,
+    borderColor: color.primary.violet,
   },
   modeLabel: {
     fontSize: typeTokens.caption.fontSize,
-    color: color.text.secondary,
+    color: color.primary.violet,
     fontWeight: '600',
   },
   modeLabelSelected: {
     color: color.text.onFill,
+  },
+  dayHeading: {
+    fontSize: typeTokens.subheading.fontSize,
+    lineHeight: typeTokens.subheading.lineHeight,
+    fontWeight: '700',
+    color: color.text.primary,
   },
 });

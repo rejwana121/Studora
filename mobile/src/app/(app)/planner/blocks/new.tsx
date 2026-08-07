@@ -1,14 +1,14 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { createStudyBlock } from '@/api/study-blocks';
-import { Screen } from '@/components/screen';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
 import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
 import { StudyBlockForm, type StudyBlockFormValues } from '@/features/planner/study-block-form';
-import { color, space, touchTarget, type as typeTokens } from '@/design-system/tokens';
+import { color, space, type as typeTokens } from '@/design-system/tokens';
 
 /** Seeds the create form's start/end in device-local time — the same
  * frame of reference the native DateTimePicker widget itself operates
@@ -47,6 +47,7 @@ export default function NewStudyBlockScreen() {
   const { date } = useLocalSearchParams<{ date: string }>();
   const { session } = useSession();
   const { requestWorkloadCheck } = useNotificationCoordinator();
+  const insets = useSafeAreaInsets();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [defaults] = useState(() => {
@@ -69,12 +70,18 @@ export default function NewStudyBlockScreen() {
   if (!session) return null;
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={styles.content}>
+    // Same continuous-periwinkle-through-status-bar shell as Today/Tasks
+    // (`edges` excludes 'top'; `headerSurface` absorbs `insets.top` into
+    // its own paddingTop) — replacing the plain `<Screen>` (flat
+    // `background.main`, no header surface) this screen used before, per
+    // "full-screen Studora presentation, not an iOS gray page-sheet."
+    <SafeAreaView style={styles.outerSafeArea} edges={['left', 'right', 'bottom']}>
+      <View style={[styles.headerSurface, { paddingTop: insets.top + space.xs }]}>
         <View style={styles.topBar}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Cancel"
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
             onPress={() => router.back()}
             style={({ pressed }) => [styles.cancelControl, pressed && styles.cancelControlPressed]}
           >
@@ -82,36 +89,48 @@ export default function NewStudyBlockScreen() {
               Cancel
             </ThemedText>
           </Pressable>
+          <ThemedText type="default" style={styles.title} numberOfLines={1}>
+            New Study Block
+          </ThemedText>
+          <View style={styles.topBarSpacer} />
         </View>
-        <ThemedText type="default" style={styles.title}>
-          New Study Block
-        </ThemedText>
+      </View>
+
+      <ScrollView style={styles.body} contentContainerStyle={styles.content}>
         <StudyBlockForm
           token={session.access_token}
           initial={{ taskId: null, taskSnapshot: null, startsAt: defaults.startsAt, endsAt: defaults.endsAt }}
-          submitLabel="Create Study Block"
+          submitLabel="Add Study Block"
           onSubmit={handleSubmit}
           isSubmitting={isSubmitting}
         />
       </ScrollView>
-    </Screen>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  content: {
-    gap: space.md,
-    paddingBottom: space.xxl,
+  outerSafeArea: {
+    flex: 1,
+    backgroundColor: color.surface.canvas,
+  },
+  headerSurface: {
+    backgroundColor: color.surface.headerSoft,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.xs,
   },
   topBar: {
     flexDirection: 'row',
-    justifyContent: 'flex-start',
+    alignItems: 'center',
+    minHeight: 36,
   },
+  // Fixed (not `touchTarget.min`-driven) width, kept in sync with
+  // `topBarSpacer` below — the real 44pt touch target comes from
+  // `hitSlop` on the Pressable instead, so the row itself stays compact
+  // without shrinking the tappable area.
   cancelControl: {
-    minHeight: touchTarget.min,
+    width: 64,
     justifyContent: 'center',
-    paddingHorizontal: space.sm,
-    marginLeft: -space.sm,
   },
   cancelControlPressed: {
     opacity: 0.6,
@@ -122,9 +141,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   title: {
-    fontSize: typeTokens.heading.fontSize,
-    lineHeight: typeTokens.heading.lineHeight,
+    flex: 1,
+    textAlign: 'center',
+    fontSize: typeTokens.subheading.fontSize,
+    lineHeight: typeTokens.subheading.lineHeight,
     fontWeight: '700',
     color: color.text.primary,
+  },
+  // Mirrors `cancelControl`'s fixed width so `title` (flex: 1, centered
+  // text) is centered against the row's true midpoint, not just the
+  // space left after a left-only control.
+  topBarSpacer: {
+    width: 64,
+  },
+  body: {
+    flex: 1,
+  },
+  content: {
+    padding: space.lg,
+    gap: space.sm,
+    paddingBottom: space.xxl,
   },
 });

@@ -30,6 +30,7 @@ interface WeekAgendaProps {
   onRefresh: () => void;
   isRefreshing: boolean;
   onSelectBlock: (block: StudyBlockRead, date: string) => void;
+  onSelectTask: (task: PlannerTaskItem) => void;
 }
 
 export function WeekAgenda({
@@ -42,6 +43,7 @@ export function WeekAgenda({
   onRefresh,
   isRefreshing,
   onSelectBlock,
+  onSelectTask,
 }: WeekAgendaProps) {
   const buckets = useMemo(() => {
     const byDate = new Map<string, { tasks: PlannerTaskItem[]; studyBlocks: StudyBlockRead[] }>();
@@ -90,6 +92,7 @@ export function WeekAgenda({
             tasks={tasks}
             studyBlocks={studyBlocks}
             onSelectBlock={(block) => onSelectBlock(block, date)}
+            onSelectTask={onSelectTask}
           />
         </View>
       ))}
