@@ -310,6 +310,29 @@ def finish_session(
     return row
 
 
+def delete_completed_session(
+    session: Session, user_id: uuid.UUID, session_id: uuid.UUID
+) -> None:
+    """DELETE /sessions/{id} — removes a session from history entirely (a
+    real row delete; no soft-delete column exists on this table).
+    Ownership is scoped through the same `get_owned_study_session` lookup
+    every other mutation uses, so a missing session and another user's
+    session are both the same 404 (see that function's own docstring) —
+    never leaks which case occurred. Only a Finished session may be
+    removed: Active/Paused raises the same "invalid status transition"
+    409 pattern as pause/resume/finish, so a session still in progress
+    can never be deleted out from under itself. `for_update=True` mirrors
+    every other mutating action here, guarding against a concurrent
+    pause/resume/finish landing between the status check and the delete."""
+    row = get_owned_study_session(session, user_id, session_id, for_update=True)
+    if row.status != "Finished":
+        raise ApiError(
+            409, "CONFLICT", f"session is {row.status.lower()}, cannot remove from history"
+        )
+    session.delete(row)
+    session.commit()
+
+
 def record_break_action(
     session: Session,
     user_id: uuid.UUID,

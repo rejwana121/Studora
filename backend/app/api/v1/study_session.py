@@ -16,6 +16,7 @@ from app.schemas.study_session import (
 from app.schemas.study_session_break import SessionBreakActionResult, StudySessionBreakCreate
 from app.services.study_block import build_task_snapshot_map
 from app.services.study_session import (
+    delete_completed_session,
     finish_session,
     list_sessions,
     pause_session,
@@ -95,6 +96,15 @@ def record_break_action_route(
     session_read = _serialize_with_snapshot(session, current_user.id, session_row)
     break_read = serialize_break_event(break_row)
     return SessionBreakActionResult(session=session_read, break_event=break_read)
+
+
+@router.delete("/{session_id}", status_code=204)
+def delete_session_route(
+    session_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> None:
+    delete_completed_session(session, current_user.id, session_id)
 
 
 @router.get("", response_model=list[StudySessionRead])
