@@ -39,6 +39,10 @@ export function listSessions(
   return request<StudySessionRead[]>(`/sessions${qs ? `?${qs}` : ''}`, { token });
 }
 
+export function deleteSession(token: string, sessionId: string): Promise<ApiResult<null>> {
+  return request<null>(`/sessions/${sessionId}`, { method: 'DELETE', token });
+}
+
 export function recordBreakAction(
   token: string,
   sessionId: string,
