@@ -31,8 +31,8 @@ class WorkloadAlarmModule : Module() {
     // call — the service, once genuinely running, may always be re-signaled
     // via startService() without hitting that restriction.
     AsyncFunction("stop") {
-      val context = appContext.reactContext ?: return@AsyncFunction
-      if (!WorkloadAlarmService.isRunning) return@AsyncFunction
+      val context = appContext.reactContext ?: return@AsyncFunction null
+      if (!WorkloadAlarmService.isRunning) return@AsyncFunction null
       val intent = Intent(context, WorkloadAlarmService::class.java).apply {
         action = WorkloadAlarmService.ACTION_STOP
       }
