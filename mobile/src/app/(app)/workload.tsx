@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useFocusEffect, type Href } from 'expo-router';
+import Constants from 'expo-constants';
+import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
@@ -10,6 +11,12 @@ import { EmptyState } from '@/components/empty-state';
 import { Screen } from '@/components/screen';
 import { ThemedText } from '@/components/themed-text';
 import { useSession } from '@/features/auth/session-context';
+import {
+  isWorkloadAlarmSupported,
+  startWorkloadAlarm,
+  stopWorkloadAlarm,
+  TAKE_A_BREAK_PARAM,
+} from '@/features/notifications/workload-alarm-controller';
 import {
   color,
   radius,
@@ -64,6 +71,17 @@ function orderFactorsForDisplay(factors: WorkloadFactor[]): WorkloadFactor[] {
   return [...strong, ...otherMeaningful];
 }
 
+// Guaranteed by EAS itself, not a guess: `eas build` always sets
+// EAS_BUILD_PROFILE to the profile name being built during config
+// evaluation (see app.config.js), which is baked into
+// `extra.easBuildProfile` at build time. Local dev/Metro runs never set
+// it, so this reads `null` there too. Only a "preview" profile exists in
+// eas.json today, so this stays true (control visible) for every build
+// the team can currently produce — the moment a "production" profile is
+// added and used, this flips to hide the control with no further code
+// change required.
+const IS_NON_PRODUCTION_BUILD = Constants.expoConfig?.extra?.easBuildProfile !== 'production';
+
 function BackRow() {
   return (
     <View style={styles.topBar}>
@@ -85,12 +103,35 @@ function BackRow() {
 
 export default function WorkloadScreen() {
   const { session } = useSession();
+  const params = useLocalSearchParams<{ fromAlarm?: string }>();
   const [data, setData] = useState<WorkloadCurrentResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showAllDetails, setShowAllDetails] = useState(false);
+  const [testAlarmActive, setTestAlarmActive] = useState(false);
+  const [testAlarmError, setTestAlarmError] = useState<string | null>(null);
   const isFetchingRef = useRef(false);
+
+  const showTestAlarmControl = IS_NON_PRODUCTION_BUILD && isWorkloadAlarmSupported();
+
+  const handleToggleTestAlarm = useCallback(() => {
+    setTestAlarmError(null);
+    if (testAlarmActive) {
+      setTestAlarmActive(false);
+      void stopWorkloadAlarm();
+      return;
+    }
+    // Starts the same real native service path the real workload trigger
+    // uses (see workload-alert.ts) — no separate fake audio implementation.
+    // Deliberately does not stop on screen unmount/navigation: the whole
+    // point of this control is to physically verify the alarm keeps
+    // looping while backgrounded/locked, same as a real one would.
+    void startWorkloadAlarm().then((result) => {
+      if (result.ok) setTestAlarmActive(true);
+      else setTestAlarmError(result.message ?? null);
+    });
+  }, [testAlarmActive]);
 
   const load = useCallback(
     (isRefresh = false) => {
@@ -123,6 +164,19 @@ export default function WorkloadScreen() {
     }, [load])
   );
 
+  // The alarm notification's "Take a Break" action opens this exact route
+  // with this marker (see workload-alarm-controller.ts) instead of
+  // stopping the alarm natively — a notification action that starts an
+  // Activity via an intermediary Service is blocked as a "trampoline" on
+  // Android 12+, so cleanup happens here instead, the moment this screen
+  // is reached. Idempotent/harmless if called when nothing is active, or
+  // if this fires again on a later focus.
+  useFocusEffect(
+    useCallback(() => {
+      if (params[TAKE_A_BREAK_PARAM] === '1') void stopWorkloadAlarm();
+    }, [params])
+  );
+
   const orderedFactors = data ? orderFactorsForDisplay(data.factors) : [];
   const hasOverflow = data
     ? orderedFactors.length > MAX_VISIBLE_ITEMS || data.recommendations.length > MAX_VISIBLE_ITEMS
@@ -134,6 +188,17 @@ export default function WorkloadScreen() {
       <ThemedText type="default" style={styles.title}>
         Workload
       </ThemedText>
+
+      {showTestAlarmControl && (
+        <View style={styles.testAlarmBlock}>
+          <Button
+            label={testAlarmActive ? 'Stop test alarm' : 'Test alarm sound'}
+            variant={testAlarmActive ? 'destructive' : 'secondary'}
+            onPress={handleToggleTestAlarm}
+          />
+          {testAlarmError && <Banner variant="error" message={testAlarmError} />}
+        </View>
+      )}
 
       {isLoading && <ActivityIndicator color={color.primary.violet} />}
 
@@ -361,6 +426,9 @@ const styles = StyleSheet.create({
     color: color.primary.violet,
   },
   errorBlock: {
+    gap: space.sm,
+  },
+  testAlarmBlock: {
     gap: space.sm,
   },
   sections: {

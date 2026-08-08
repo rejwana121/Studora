@@ -4,6 +4,8 @@ import { Platform } from 'react-native';
 import { secureStorageAdapter } from '@/lib/secure-storage';
 import type { WorkloadCurrentResponse } from '@/types/api';
 
+import { isWorkloadAlarmSupported, startWorkloadAlarm } from './workload-alarm-controller';
+
 export const WORKLOAD_ALERT_NOTIFICATION_TYPE = 'workload_alert';
 // v1: a brand-new feature, not a migration off an older channel — versioned
 // from the start so any future retune (sound/importance/etc.) can bump this
@@ -151,6 +153,18 @@ async function fireNotification(userId: string, evaluatedAt: string): Promise<bo
     type: WORKLOAD_ALERT_NOTIFICATION_TYPE,
     evaluated_at: evaluatedAt,
   };
+
+  // Android + a custom dev/preview/production build (Checkpoint 4B): the
+  // foreground service's own persistent notification IS the alert, with
+  // the looping sound it owns exclusively — return here so the one-shot
+  // notification below never also plays sound for the same crossing. That
+  // one-shot path remains the fallback whenever the native alarm can't
+  // start, and is still the only path on iOS/web/Expo Go.
+  if (isWorkloadAlarmSupported()) {
+    const alarmResult = await startWorkloadAlarm();
+    if (alarmResult.ok) return true;
+  }
+
   try {
     await ensureWorkloadAlertChannel();
     await Notifications.scheduleNotificationAsync({

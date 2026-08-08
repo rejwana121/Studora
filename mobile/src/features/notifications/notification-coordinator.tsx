@@ -31,6 +31,7 @@ import {
   reconcileDeadlineNotificationSchedule,
   type TaskDeadlineNotificationData,
 } from './schedule-deadline-notification';
+import { stopWorkloadAlarm } from './workload-alarm-controller';
 import {
   checkAndMaybeFireWorkloadAlert,
   dismissWorkloadAlert,
@@ -512,6 +513,10 @@ export function NotificationCoordinatorProvider({ children }: { children: ReactN
       disposedRef.current = true;
       sweepGenerationRef.current += 1;
       lastHandledNotificationKeyRef.current = null;
+      // Stop any active alarm before the rest of notification cleanup —
+      // an active foreground-service alarm must never keep looping past
+      // sign-out. Idempotent/best-effort, like the cancels below.
+      void stopWorkloadAlarm();
       void cancelAllBreakNotifications();
       void cancelAllDeadlineNotifications();
       // Dismiss-only, never a state delete — userIdRef still holds the

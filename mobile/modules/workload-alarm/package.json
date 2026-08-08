@@ -1,0 +1,9 @@
+{
+  "name": "workload-alarm",
+  "version": "1.0.0",
+  "description": "Studora Android workload alarm foreground service (local Expo module, not published)",
+  "main": "index.ts",
+  "types": "index.ts",
+  "license": "UNLICENSED",
+  "private": true
+}
