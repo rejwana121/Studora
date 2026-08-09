@@ -21,5 +21,20 @@ class Settings(BaseSettings):
     # needs this — ES256/JWKS verification (core/security.py) works without it.
     supabase_legacy_jwt_secret: str = ""
 
+    # Comma-separated browser origins allowed to call this API cross-origin
+    # (see app/main.py's CORSMiddleware). Defaults cover local Expo Web dev
+    # servers only — a deployed web origin must be added explicitly via the
+    # CORS_ORIGINS env var. Never a wildcard: an explicit allowlist is what
+    # lets the middleware echo back a single matching Access-Control-Allow-
+    # Origin per request instead of admitting every site on the internet.
+    cors_origins: str = (
+        "http://localhost:8081,http://127.0.0.1:8081,"
+        "http://localhost:8082,http://127.0.0.1:8082"
+    )
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
 
 settings = Settings()
