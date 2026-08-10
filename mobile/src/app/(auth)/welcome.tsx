@@ -1,10 +1,14 @@
-import { Link } from 'expo-router';
+import { Link, Redirect, router } from 'expo-router';
 import { Image, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AuthContainer } from '@/components/auth-container';
+import { Banner } from '@/components/banner';
+import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
+import { useSession } from '@/features/auth/session-context';
+import { initialWebAuthRedirect } from '@/lib/supabase';
 import { color, elevation, radius, shadowStyle, space, type as typeTokens } from '@/design-system/tokens';
 
 // Hero asset is a pre-cropped 853x925 slice of the approved reference
@@ -58,9 +62,21 @@ const FULL_WIDTH_BENEFIT = {
 } as const;
 
 export default function WelcomeScreen() {
+  const { session } = useSession();
   const { width: viewportWidth } = useWindowDimensions();
   const heroWidth = viewportWidth;
   const heroHeight = heroWidth * HERO_ASPECT_RATIO;
+
+  // This screen is where Supabase's email-confirmation redirect lands on
+  // web (http://localhost:8081/welcome#access_token=...). A plain first
+  // visit never carries these params, so the normal Welcome flow below is
+  // untouched for every other user.
+  if (initialWebAuthRedirect?.isConfirmation) {
+    if (initialWebAuthRedirect.errorDescription) {
+      return <ConfirmationErrorPanel message={initialWebAuthRedirect.errorDescription} />;
+    }
+    return <Redirect href={session ? '/(app)/(tabs)' : '/(auth)/sign-in?confirmed=1'} />;
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
@@ -153,6 +169,26 @@ export default function WelcomeScreen() {
           </AuthContainer>
         </View>
       </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function ConfirmationErrorPanel({ message }: { message: string }) {
+  return (
+    <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
+      <View style={styles.errorScreen}>
+        <AuthContainer maxWidth={CONTENT_MAX_WIDTH}>
+          <View style={styles.errorContent}>
+            <ThemedText type="default" style={styles.errorTitle}>
+              Confirmation failed
+            </ThemedText>
+            <Banner variant="error" message={message} />
+            <View style={styles.errorButton}>
+              <Button label="Go to Sign in" onPress={() => router.replace('/(auth)/sign-in')} />
+            </View>
+          </View>
+        </AuthContainer>
+      </View>
     </SafeAreaView>
   );
 }
@@ -281,5 +317,22 @@ const styles = StyleSheet.create({
     color: color.text.primary,
     fontSize: typeTokens.label.fontSize,
     fontWeight: '700',
+  },
+  errorScreen: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: MOBILE_MARGIN,
+  },
+  errorContent: {
+    gap: space.md,
+  },
+  errorTitle: {
+    color: color.text.primary,
+    fontSize: HEADLINE_FONT_SIZE,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  errorButton: {
+    marginTop: space.sm,
   },
 });

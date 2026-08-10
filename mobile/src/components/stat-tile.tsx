@@ -33,7 +33,9 @@ export function StatTile({ icon, label, value, tone = 'violet' }: StatTileProps)
 
   return (
     <View style={[styles.tile, { backgroundColor: bg }]}>
-      <Icon name={icon} size="sm" color={iconColor} />
+      <View style={styles.iconBadge}>
+        <Icon name={icon} size="sm" color={iconColor} />
+      </View>
       <ThemedText type="default" style={[styles.value, { color: textColor }]}>
         {value}
       </ThemedText>
@@ -55,13 +57,25 @@ const styles = StyleSheet.create({
   },
   tile: {
     flex: 1,
-    minHeight: 82,
+    minHeight: 68,
     alignItems: 'flex-start',
     justifyContent: 'center',
     gap: 2,
     borderRadius: radius.control,
     paddingHorizontal: space.sm,
-    paddingVertical: space.sm,
+    paddingVertical: space.xs,
+  },
+  // Translucent white on every tone's own pastel bg — gives the icon a
+  // distinct "badge" instead of floating bare, without inventing a new
+  // colour token per tone.
+  iconBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
   },
   value: {
     fontSize: typeTokens.heading.fontSize,

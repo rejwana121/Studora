@@ -53,6 +53,18 @@ export interface UseFocusSessionResult {
    * Semantically distinct from `finishedElsewhereMessage`, which is
    * reserved for a session discovered finished on another device. */
   finishedJustNowVersion: number;
+  /** The authoritative row returned by the finish API call itself — the
+   * server-computed final `active_duration_seconds`, not a locally
+   * interpolated or previously-synced value. `session`/`phase` correctly
+   * go to "no current session" on finish (a finished session is never fed
+   * back in as the *current* one), but that response row still carries
+   * the one truthful number for "how long did this session actually
+   * run" — this field is where it's kept instead of being discarded.
+   * Sup­ersedes SessionCard's old lastSessionRef-of-focus.session
+   * approach, whose value could be several seconds stale by the time
+   * Finish was pressed (session.active_duration_seconds only advances on
+   * a sync/mutation, not every second like displaySeconds does). */
+  lastFinishedSession: StudySessionRead | null;
   /** Mutation-priority-safe reconciliation trigger. Call this — never a
    * raw "GET /sessions" — from mount/focus, AppState-active, and the
    * internal 30s interval alike, so an in-flight mutation is never
@@ -82,6 +94,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   const [notificationScheduleError, setNotificationScheduleError] = useState<string | null>(null);
   const [finishedElsewhereMessage, setFinishedElsewhereMessage] = useState<string | null>(null);
   const [finishedJustNowVersion, setFinishedJustNowVersion] = useState(0);
+  const [lastFinishedSession, setLastFinishedSession] = useState<StudySessionRead | null>(null);
   const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
 
   const { permissionStatus, requestWorkloadCheck } = useNotificationCoordinator();
@@ -304,13 +317,17 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
 
   const finish = useCallback(async () => {
     if (!token || !session) return;
-    // The response row's own `status` is always "Finished" here — never
-    // fed into current-session state (unlike start/pause/resume, whose
-    // rows genuinely ARE the new current session). Finishing always means
-    // "no current session," regardless of what the row contains.
+    // The response row's own `status` is always "Finished" here, so it's
+    // never fed into current-session state (unlike start/pause/resume,
+    // whose rows genuinely ARE the new current session) — finishing
+    // always means "no current session," regardless of what the row
+    // contains. Its `active_duration_seconds` is still the one
+    // authoritative, server-computed final duration, though — captured
+    // into lastFinishedSession (not discarded) for the Complete panel.
     const result = await runMutation(
       () => finishSession(token, session.id),
-      () => {
+      (row) => {
+        setLastFinishedSession(row);
         applySnapshotAndSync(null, true);
         setFinishedJustNowVersion((v) => v + 1);
         requestWorkloadCheck();
@@ -446,6 +463,7 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
     finishedElsewhereMessage,
     dismissFinishedElsewhereMessage,
     finishedJustNowVersion,
+    lastFinishedSession,
     reconcile,
     start,
     pause,

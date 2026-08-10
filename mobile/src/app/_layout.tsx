@@ -2,8 +2,10 @@ import * as Notifications from 'expo-notifications';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { SessionProvider, useSession } from '@/features/auth/session-context';
+import { color } from '@/design-system/tokens';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -34,7 +36,17 @@ function RootNavigator() {
     }
   }, [isLoading]);
 
-  if (isLoading) return null;
+  // Native keeps the OS splash screen visible for this whole window (hidden
+  // above once isLoading flips false), so this only ever paints on web —
+  // where there is no native splash, and this is also the moment the
+  // client is parsing a possible email-confirmation redirect from the URL.
+  if (isLoading) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator color={color.primary.violet} />
+      </View>
+    );
+  }
 
   return <Stack screenOptions={{ headerShown: false }} />;
 }
@@ -46,3 +58,12 @@ export default function RootLayout() {
     </SessionProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: color.background.card,
+  },
+});

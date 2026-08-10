@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, Platform, type AppStateStatus } from 'react-native';
 
 import { getTask, getTasksToday } from '@/api/tasks';
 import { listSessions } from '@/api/sessions';
@@ -90,7 +90,46 @@ function notificationEventKey(
 // the authenticated, token-dependent concerns: listeners, schedule
 // access, navigation, and sign-out/account-switch cleanup.
 
+// expo-notifications has no web implementation for scheduling, listeners,
+// or the last-response APIs (`getLastNotificationResponseAsync` throws
+// "not available on web") — every one of those lives only inside
+// NativeNotificationCoordinatorProvider below, which this wrapper never
+// mounts on web. Branching to a different child component here (rather
+// than an `if (Platform.OS === 'web') return;` inside the native
+// provider's own effects) keeps rules-of-hooks trivially satisfied: this
+// wrapper itself calls no hooks, and each child component calls its own
+// hooks unconditionally, every render.
 export function NotificationCoordinatorProvider({ children }: { children: ReactNode }) {
+  if (Platform.OS === 'web') {
+    return <WebNotificationCoordinatorProvider>{children}</WebNotificationCoordinatorProvider>;
+  }
+  return <NativeNotificationCoordinatorProvider>{children}</NativeNotificationCoordinatorProvider>;
+}
+
+// Deliberately static — never calls the real permission API (would prompt
+// the browser's native notification permission, which web must never do)
+// and never claims a status other than 'denied', since nothing here can
+// ever actually deliver a notification on web.
+async function webNoopRequestPermission(): Promise<void> {}
+function webNoop(): void {}
+
+function WebNotificationCoordinatorProvider({ children }: { children: ReactNode }) {
+  return (
+    <NotificationCoordinatorContext.Provider
+      value={{
+        permissionStatus: 'denied',
+        requestPermission: webNoopRequestPermission,
+        requestDeadlineReconcile: webNoop,
+        requestWorkloadCheck: webNoop,
+        focusBreakIntentVersion: 0,
+      }}
+    >
+      {children}
+    </NotificationCoordinatorContext.Provider>
+  );
+}
+
+function NativeNotificationCoordinatorProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
   const token = session?.access_token ?? null;
   const userId = session?.user.id ?? null;

@@ -1,4 +1,4 @@
-import { Link, router } from 'expo-router';
+import { Link, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -11,6 +11,7 @@ import { signIn } from '@/features/auth/auth-service';
 import { color, space, type as typeTokens } from '@/design-system/tokens';
 
 export default function SignInScreen() {
+  const { confirmed } = useLocalSearchParams<{ confirmed?: string }>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
@@ -46,6 +47,11 @@ export default function SignInScreen() {
       {serverError && (
         <View style={styles.bannerWrap}>
           <Banner variant="error" message={serverError} />
+        </View>
+      )}
+      {!serverError && confirmed === '1' && (
+        <View style={styles.bannerWrap}>
+          <Banner variant="success" message="Email verified successfully. Please sign in." />
         </View>
       )}
 

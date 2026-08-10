@@ -7,7 +7,7 @@ import { getDay } from '@/api/planner';
 import { getTasksToday, updateTask } from '@/api/tasks';
 import { Avatar } from '@/components/avatar';
 import { Banner } from '@/components/banner';
-import { EmptyState } from '@/components/empty-state';
+import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
 import { SectionCard } from '@/components/section-card';
 import { StatRow, StatTile } from '@/components/stat-tile';
@@ -159,13 +159,25 @@ export default function TodayScreen() {
       active: sections.overdue.length + sections.dueSoon.length + sections.highPriority.length + sections.pending.length,
       overdue: sections.overdue.length,
       dueSoon: sections.dueSoon.length,
+      // `sections.*` are already deduped by precedence (overdue → due soon
+      // → high priority → pending), so overdue/dueSoon/highPriority are
+      // mutually exclusive here — summing them is a real, non-overlapping
+      // "needs attention" count, unlike summing the raw (overlapping)
+      // `view.*` API arrays would be.
+      attention: sections.overdue.length + sections.dueSoon.length + sections.highPriority.length,
     };
   }, [sections]);
 
   const showHero = stats !== null && !isEmpty;
+  // Same `isEmpty` signal item 2's onboarding card is keyed on — `pending`
+  // (get_today_view's base query) already covers every Pending/InProgress
+  // task regardless of urgency, so all four buckets empty truly means
+  // zero active tasks, not "zero urgent ones."
+  const showOnboarding = stats !== null && isEmpty;
   const overdueCount = stats?.overdue ?? 0;
   const activeCount = stats?.active ?? 0;
   const dueSoonCount = stats?.dueSoon ?? 0;
+  const attentionCount = stats?.attention ?? 0;
 
   // Reuses the exact same call Task Detail's own Complete button and the
   // Tasks list's row toggle already make (`updateTask` with only `status`
@@ -244,7 +256,7 @@ export default function TodayScreen() {
               <Avatar
                 label={profile?.display_name ?? session.user.email}
                 uri={avatarSignedUrl}
-                size={50}
+                size={44}
                 shape="circle"
               />
             </Pressable>
@@ -267,27 +279,27 @@ export default function TodayScreen() {
                 <View
                   style={[
                     styles.heroIconBadge,
-                    { backgroundColor: overdueCount > 0 ? color.risk.high.bg : color.accent.mint },
+                    { backgroundColor: attentionCount > 0 ? color.risk.high.bg : color.accent.mint },
                   ]}
                 >
                   <Icon
-                    name={overdueCount > 0 ? 'warning' : 'checkmark-circle-outline'}
+                    name={attentionCount > 0 ? 'warning' : 'checkmark-circle-outline'}
                     size="sm"
-                    color={overdueCount > 0 ? color.risk.high.text : color.success.strong}
+                    color={attentionCount > 0 ? color.risk.high.text : color.success.strong}
                   />
                 </View>
                 <ThemedText type="default" style={styles.heroHeadline}>
-                  {overdueCount > 0
-                    ? `${overdueCount} task${overdueCount === 1 ? '' : 's'} need${overdueCount === 1 ? 's' : ''} attention`
+                  {attentionCount > 0
+                    ? `${attentionCount} task${attentionCount === 1 ? '' : 's'} need${attentionCount === 1 ? 's' : ''} attention`
                     : "You're on track today"}
                 </ThemedText>
               </View>
 
-              {overdueCount > 0 && (
-                <ThemedText type="default" style={styles.heroSupporting}>
-                  Start with the most urgent deadline.
-                </ThemedText>
-              )}
+              <ThemedText type="default" style={styles.heroSupporting}>
+                {attentionCount > 0
+                  ? 'Start with the most urgent deadline.'
+                  : 'No urgent tasks need your attention right now.'}
+              </ThemedText>
 
               <StatRow>
                 <StatTile icon="time-outline" label="Overdue" value={overdueCount} tone="attention" />
@@ -297,6 +309,25 @@ export default function TodayScreen() {
 
               <View style={styles.heroDivider} />
               <WorkloadAction />
+            </SectionCard>
+          ) : showOnboarding ? (
+            // Zero active tasks — replaces the metrics card entirely
+            // rather than showing real stat tiles that would all read
+            // "0". No `WorkloadAction` row either: there is no workload
+            // evaluation worth surfacing yet with no tasks to score.
+            <SectionCard variant="emphasis" style={styles.hero}>
+              <View style={styles.heroHeadlineRow}>
+                <View style={[styles.heroIconBadge, { backgroundColor: color.accent.lavender }]}>
+                  <Icon name="calendar-outline" size="sm" color={color.primary.violet} />
+                </View>
+                <ThemedText type="default" style={styles.heroHeadline}>
+                  Ready to plan your day?
+                </ThemedText>
+              </View>
+              <ThemedText type="default" style={styles.heroSupporting}>
+                Add your first task and Studora will help you stay on track.
+              </ThemedText>
+              <Button label="Add a task" onPress={() => router.push('/tasks/new' as Href)} />
             </SectionCard>
           ) : (
             <SectionCard variant="default" style={styles.hero}>
@@ -308,52 +339,44 @@ export default function TodayScreen() {
         {isLoading && <ActivityIndicator color={color.primary.violet} />}
         {!isLoading && loadError && <Banner variant="error" message={loadError} />}
 
-        {!isLoading && !loadError && isEmpty && (
+        {!isLoading && !loadError && sections && (
           <ScrollView
-            contentContainerStyle={styles.emptyScroll}
-            refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
-          >
-            <EmptyState
-              message="No tasks yet"
-              actionLabel="Add your first task"
-              onAction={() => router.push('/tasks/new' as Href)}
-            />
-          </ScrollView>
-        )}
-
-        {!isLoading && !loadError && sections && !isEmpty && (
-          <ScrollView
+            style={styles.scrollBody}
             contentContainerStyle={styles.sections}
             refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           >
-            <View style={styles.priorityHeaderRow}>
-              <ThemedText type="default" style={styles.priorityTitle}>
-                Priority tasks
-              </ThemedText>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="View all tasks"
-                onPress={() => router.push('/tasks' as Href)}
-                style={({ pressed }) => [styles.viewAllRow, pressed && styles.pressedFade]}
-              >
-                <ThemedText type="default" style={styles.viewAllText}>
-                  View all
-                </ThemedText>
-                <Icon name="chevron-forward" size="sm" color={color.primary.violet} />
-              </Pressable>
-            </View>
+            {priorityTasks.length > 0 && (
+              <>
+                <View style={styles.priorityHeaderRow}>
+                  <ThemedText type="default" style={styles.priorityTitle}>
+                    Priority tasks
+                  </ThemedText>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="View all tasks"
+                    onPress={() => router.push('/tasks' as Href)}
+                    style={({ pressed }) => [styles.viewAllRow, pressed && styles.pressedFade]}
+                  >
+                    <ThemedText type="default" style={styles.viewAllText}>
+                      View all
+                    </ThemedText>
+                    <Icon name="chevron-forward" size="sm" color={color.primary.violet} />
+                  </Pressable>
+                </View>
 
-            <View style={styles.priorityList}>
-              {priorityTasks.map((task) => (
-                <PriorityTaskRow
-                  key={task.id}
-                  task={task}
-                  onPress={() => router.push(`/tasks/${task.id}` as Href)}
-                  onToggleComplete={() => handleToggleComplete(task)}
-                  isToggling={togglingId === task.id}
-                />
-              ))}
-            </View>
+                <View style={styles.priorityList}>
+                  {priorityTasks.map((task) => (
+                    <PriorityTaskRow
+                      key={task.id}
+                      task={task}
+                      onPress={() => router.push(`/tasks/${task.id}` as Href)}
+                      onToggleComplete={() => handleToggleComplete(task)}
+                      isToggling={togglingId === task.id}
+                    />
+                  ))}
+                </View>
+              </>
+            )}
 
             {nextBlock ? (
               <Pressable
@@ -578,8 +601,8 @@ const styles = StyleSheet.create({
     paddingRight: space.sm,
   },
   greeting: {
-    fontSize: typeTokens.heading.fontSize,
-    lineHeight: typeTokens.heading.lineHeight,
+    fontSize: typeTokens.display.fontSize,
+    lineHeight: typeTokens.display.lineHeight,
     fontWeight: '700',
     color: color.text.primary,
   },
@@ -618,8 +641,19 @@ const styles = StyleSheet.create({
   bodyColumn: {
     flex: 1,
     paddingHorizontal: space.lg,
-    paddingBottom: space.lg,
-    gap: space.sm,
+    // No paddingBottom: the tab bar is docked (not absolute/floating —
+    // see (tabs)/_layout.tsx), so it already reserves its own space below
+    // this screen. `sections.paddingBottom` alone gives the scrollable
+    // content its trailing breathing room; stacking a second fixed
+    // bottom inset here just left a large blank gap above the tab bar.
+    gap: space.md,
+  },
+  // Bounds each ScrollView to the remaining flex space in `bodyColumn`
+  // (it has none by default — a bare `<ScrollView>` sizes to its own
+  // content instead of the viewport), so scrolling and the tab-bar
+  // clearance below are governed by real layout, not a guessed spacer.
+  scrollBody: {
+    flex: 1,
   },
   // Pulls the hero/fallback card up to overlap the header's rounded
   // bottom edge by ~12px — both are Screen-level siblings (not children
@@ -630,7 +664,7 @@ const styles = StyleSheet.create({
   },
   hero: {
     paddingHorizontal: space.md,
-    paddingVertical: space.sm,
+    paddingVertical: space.xs,
     gap: space.xs,
   },
   heroHeadlineRow: {
@@ -639,8 +673,8 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   heroIconBadge: {
-    width: 38,
-    height: 38,
+    width: 32,
+    height: 32,
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
@@ -665,7 +699,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    minHeight: 50,
+    minHeight: touchTarget.min,
   },
   workloadActionLeft: {
     flexDirection: 'row',
@@ -684,14 +718,11 @@ const styles = StyleSheet.create({
     fontSize: typeTokens.body.fontSize,
     lineHeight: typeTokens.body.lineHeight,
     fontWeight: '600',
-    color: color.primary.violet,
-  },
-  emptyScroll: {
-    flexGrow: 1,
+    color: color.text.primary,
   },
   sections: {
     gap: space.sm,
-    paddingBottom: space.xxl,
+    paddingBottom: space.md,
   },
   priorityHeaderRow: {
     flexDirection: 'row',
@@ -721,25 +752,32 @@ const styles = StyleSheet.create({
   },
   priorityRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: space.sm,
+    alignItems: 'center',
+    minHeight: 76,
+    gap: space.xs,
     backgroundColor: color.background.card,
     borderRadius: radius.card,
     borderWidth: 1,
     borderColor: color.border.divider,
-    paddingHorizontal: space.md,
-    paddingVertical: 10,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xs,
   },
   priorityIconBadge: {
-    width: 42,
-    height: 42,
+    width: 38,
+    height: 38,
     borderRadius: radius.control,
     backgroundColor: color.accent.lavender,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // `minWidth: 0` lets this flex:1 column shrink below its content's
+  // intrinsic width — without it, Yoga can let a long title push
+  // `priorityRight` (due date/priority) instead of truncating via the
+  // title's own `numberOfLines`, which is what let the due date collide
+  // with/overlap the title on longer real task names.
   priorityContent: {
     flex: 1,
+    minWidth: 0,
     gap: 2,
   },
   priorityTaskTitle: {
@@ -767,7 +805,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: color.risk.high.text,
   },
+  // `flexShrink: 0` reserves this column's own natural width so the
+  // title (the flexible, truncating column) is always the one that
+  // gives way — this column never gets squeezed.
   priorityRight: {
+    flexShrink: 0,
     alignItems: 'flex-end',
     gap: 4,
   },

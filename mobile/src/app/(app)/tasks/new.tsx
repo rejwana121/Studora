@@ -1,7 +1,8 @@
 import { router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { createTask } from '@/api/tasks';
 import { ThemedText } from '@/components/themed-text';
@@ -13,6 +14,28 @@ import { color, space, touchTarget, type as typeTokens } from '@/design-system/t
 const SIDE_SLOT_WIDTH = 88;
 
 export default function NewTaskScreen() {
+  // A nested SafeAreaProvider, not just SafeAreaView/useSafeAreaInsets
+  // directly: this screen is presented via React Navigation's native-stack
+  // 'fullScreenModal', a separate native view controller on iOS that the
+  // single app-root SafeAreaProvider (the one expo-router injects
+  // implicitly — there is no other SafeAreaProvider anywhere in this app)
+  // never measures. Without this, useSafeAreaInsets() below silently
+  // inherits that stale/zero root-window measurement instead of the
+  // modal's own, which is exactly what let the title/Cancel render
+  // starting at true y=0 — inside the status bar — despite the header
+  // code itself already being structurally correct. Wrapping here forces
+  // a fresh, modal-scoped measurement. useSafeAreaInsets() must run in a
+  // component BELOW this provider, never in this same one (a hook can't
+  // observe a context its own render is still in the middle of creating),
+  // hence the separate NewTaskScreenBody component below.
+  return (
+    <SafeAreaProvider>
+      <NewTaskScreenBody />
+    </SafeAreaProvider>
+  );
+}
+
+function NewTaskScreenBody() {
   const { session } = useSession();
   const insets = useSafeAreaInsets();
   const { requestDeadlineReconcile, requestWorkloadCheck } = useNotificationCoordinator();
@@ -32,6 +55,10 @@ export default function NewTaskScreen() {
 
   return (
     <View style={styles.root}>
+      {/* Light headerSurface background — dark content reads correctly on
+       * it. Scoped to this screen only via mount/unmount, same pattern as
+       * Focus's own StatusBar override; no global status-bar config touched. */}
+      <StatusBar style="dark" />
       {/* `edges` excludes 'top': the periwinkle `headerSurface` below owns
        * the physical status-bar strip itself (via its own paddingTop:
        * insets.top), so SafeAreaView must not also reserve/paint that
@@ -54,6 +81,7 @@ export default function NewTaskScreen() {
               accessibilityRole="button"
               accessibilityLabel="Cancel"
               onPress={() => router.back()}
+              hitSlop={{ top: 0, bottom: space.sm, left: space.sm, right: space.sm }}
               style={({ pressed }) => [styles.sideSlot, styles.cancelSlot, pressed && styles.pressed]}
             >
               <ThemedText type="default" style={styles.cancelLabel}>
