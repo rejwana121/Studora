@@ -400,6 +400,28 @@ export default function ProfileScreen() {
 
           <View style={styles.group}>
             <ThemedText type="default" style={styles.groupLabel}>
+              Billing
+            </ThemedText>
+            <View style={styles.divider} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Plans & Billing, current plan Free"
+              onPress={() => router.push('/profile/plans-billing' as Href)}
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+            >
+              <RowIcon name="card-outline" />
+              <ThemedText type="default" style={styles.rowLabel}>
+                Plans & Billing
+              </ThemedText>
+              <ThemedText type="default" style={styles.rowValue} numberOfLines={1}>
+                Free
+              </ThemedText>
+              <Icon name="chevron-forward" size="sm" color={color.text.secondary} />
+            </Pressable>
+          </View>
+
+          <View style={styles.group}>
+            <ThemedText type="default" style={styles.groupLabel}>
               Security
             </ThemedText>
             <View style={styles.divider} />
