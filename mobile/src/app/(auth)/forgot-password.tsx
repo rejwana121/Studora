@@ -40,7 +40,7 @@ export default function ForgotPasswordScreen() {
 
   return (
     <AuthShell
-      heroSource={require('../../../assets/images/studora-reset-password-hero.png')}
+      heroSource={require('../../../assets/images/studora-reset-password-hero-opt.jpg')}
       variant="resetPassword"
       title="Reset password"
       subtitle="We'll send a reset link to your email."
