@@ -82,7 +82,7 @@ export default function WelcomeScreen() {
     <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
       <ScrollView style={styles.fill} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <Image
-          source={require('../../../assets/images/studora-welcome-hero-crop.png')}
+          source={require('../../../assets/images/studora-welcome-hero-crop-opt.png')}
           style={{ width: heroWidth, height: heroHeight }}
           resizeMode="stretch"
           accessibilityElementsHidden

@@ -65,7 +65,7 @@ export default function SignUpScreen() {
 
   return (
     <AuthShell
-      heroSource={require('../../../assets/images/studora-sign-up-hero.png')}
+      heroSource={require('../../../assets/images/studora-sign-up-hero-opt.jpg')}
       variant="signUp"
       title="Create your account"
       subtitle="Start planning university life with less stress."

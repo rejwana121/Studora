@@ -39,7 +39,7 @@ export default function SignInScreen() {
 
   return (
     <AuthShell
-      heroSource={require('../../../assets/images/studora-sign-in-hero.png')}
+      heroSource={require('../../../assets/images/studora-sign-in-hero-opt.jpg')}
       variant="signIn"
       title="Welcome back"
       subtitle="Sign in to continue your study plan."
