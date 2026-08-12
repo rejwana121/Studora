@@ -132,17 +132,20 @@ const FACTOR_GROUP_ICON: Record<string, IconName> = {
 };
 const DEFAULT_FACTOR_ICON: IconName = 'ellipse-outline';
 
-/** The backend's own `GROUP_OF` (constants.py) puts both
- * `recent_completion_delay_avg` (late-finish average) and
- * `reschedule_count_lifetime` (lifetime reschedule count) under the same
- * "Completion" group — real, intentional backend grouping this screen
- * never repoints. Display-only: two semantically different factors must
- * not render the same title/icon side by side, so the title/icon shown
- * here is keyed off the specific factor `key`, falling back to the
- * group's own title/icon for every other factor. The factor's group,
- * key, value, and explanation are all still read from the real payload
- * unchanged. */
+/** The backend's own `GROUP_OF` (constants.py) groups multiple distinct signals
+ * under the same group name — three signals share "Deadline" and two share
+ * "Completion". Rendering the group name as-is would produce identical
+ * "Deadline / Deadline / Deadline" rows. Display-only: each entry here gives
+ * a specific factor `key` its own truthful title and icon instead of the
+ * group-level fallback. The factor's group, key, value, and explanation are
+ * all still read from the real payload unchanged. */
 const FACTOR_KEY_DISPLAY: Partial<Record<string, { title: string; icon: IconName }>> = {
+  // Deadline group — three distinct signals, each with its own title so the
+  // factors card never shows "Deadline / Deadline / Deadline" in a row.
+  overdue_count: { title: 'Overdue tasks', icon: 'alert-circle-outline' },
+  cluster_72h: { title: 'Deadline cluster', icon: 'time-outline' },
+  due_72h_count: { title: 'Due soon', icon: 'calendar-outline' },
+  // Completion group — two semantically different factors under one group name.
   reschedule_count_lifetime: { title: 'Rescheduling', icon: 'repeat-outline' },
 };
 

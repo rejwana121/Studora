@@ -124,16 +124,23 @@ export function TaskForm({ initial, submitLabel, onSubmit, isSubmitting }: TaskF
 
     let parsedEstimate: number | null = null;
     let hasEstimateError = false;
+    let estimateErrorMsg = 'Must be a positive number (e.g. 1.5)';
     if (estimateHours.trim().length > 0) {
       const parsed = Number(estimateHours);
-      if (!Number.isFinite(parsed) || parsed <= 0) hasEstimateError = true;
-      else parsedEstimate = parsed;
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        hasEstimateError = true;
+      } else if (parsed >= 100) {
+        hasEstimateError = true;
+        estimateErrorMsg = 'Enter a value under 100 hours';
+      } else {
+        parsedEstimate = parsed;
+      }
     }
 
     setTitleError(hasTitleError ? 'Title is required' : null);
     setTypeError(hasTypeError ? 'Choose a type' : null);
     setPriorityError(hasPriorityError ? 'Choose a priority' : null);
-    setEstimateError(hasEstimateError ? 'Must be a positive number' : null);
+    setEstimateError(hasEstimateError ? estimateErrorMsg : null);
 
     if (hasTitleError || hasTypeError || hasPriorityError || hasEstimateError) return;
 
@@ -214,12 +221,13 @@ export function TaskForm({ initial, submitLabel, onSubmit, isSubmitting }: TaskF
         </View>
 
         <TextField
-          label="Estimate (hours, optional)"
+          label="Estimated time (hours)"
           value={estimateHours}
           onChangeText={setEstimateHours}
           error={estimateError}
+          helperText="e.g. 1, 1.5, 0.75"
           keyboardType="decimal-pad"
-          placeholder="e.g. 2"
+          placeholder="Optional"
         />
         <TextField label="Notes (optional)" value={notes} onChangeText={setNotes} multiline placeholder="Add any notes…" />
       </SectionCard>

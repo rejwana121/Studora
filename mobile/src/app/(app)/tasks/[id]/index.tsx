@@ -26,6 +26,7 @@ import {
   touchTarget,
   type as typeTokens,
 } from '@/design-system/tokens';
+import { formatEstimate } from '@/lib/format';
 import type { Task, TaskStatus } from '@/types/api';
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -44,10 +45,6 @@ function formatDeadline(iso: string): string {
     hour: 'numeric',
     minute: '2-digit',
   });
-}
-
-function formatEstimate(hours: number): string {
-  return `${hours} hour${hours === 1 ? '' : 's'}`;
 }
 
 export default function TaskDetailsScreen() {
