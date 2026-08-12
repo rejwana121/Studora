@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
+import { getTask, updateTask } from '@/api/tasks';
+import { decideTaskTransition } from './focus-task-transition';
 import {
   finishSession,
   listSessions,
@@ -11,7 +13,7 @@ import {
 } from '@/api/sessions';
 import { useNotificationCoordinator } from '@/features/notifications/notification-coordinator';
 import { reconcileBreakNotificationSchedule } from '@/features/notifications/schedule-break-notification';
-import type { ApiResult, BreakAction, StudySessionCreate, StudySessionRead } from '@/types/api';
+import type { ApiResult, BreakAction, StudySessionCreate, StudySessionRead, TaskStatus } from '@/types/api';
 
 import { useFocusBreakCue } from './use-focus-break-cue';
 
@@ -73,7 +75,7 @@ export interface UseFocusSessionResult {
    * AppState-active and mutation-resolution reconciles, leave it unset
    * for the plain 30s poll and screen-focus reconcile. */
   reconcile: (options?: { force?: boolean }) => void;
-  start: (taskId: string | null) => Promise<string | null>;
+  start: (taskId: string | null, taskStatus?: TaskStatus | null) => Promise<string | null>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   finish: () => Promise<void>;
@@ -279,12 +281,30 @@ export function useFocusSession(token: string | null): UseFocusSessionResult {
   // ambiguous-retry handling needed, unlike break actions below) -------
 
   const start = useCallback(
-    async (taskId: string | null): Promise<string | null> => {
+    async (taskId: string | null, taskStatus?: TaskStatus | null): Promise<string | null> => {
       if (!token) return 'Not signed in';
       const data: StudySessionCreate = { task_id: taskId };
       const result = await runMutation(() => startSession(token, data), (row) => applySnapshotAndSync(row, true));
       if (!result) return null;
-      if (result.ok) return null;
+      if (result.ok) {
+        // Fire-and-forget: transition Pending linked task → InProgress.
+        // Fast-path: skip entirely if caller already knows task is InProgress
+        // (no transition needed) — avoids two unnecessary round-trips.
+        if (taskId && taskStatus !== 'InProgress') {
+          void (async () => {
+            try {
+              const current = await getTask(token, taskId);
+              if (current.ok) {
+                const target = decideTaskTransition(current.data.status);
+                if (target) await updateTask(token, taskId, { status: target });
+              }
+            } catch {
+              // Best-effort — session is already running and correct.
+            }
+          })();
+        }
+        return null;
+      }
       if (result.status === 409) {
         // Another start won the race (or a double-tap slipped through) —
         // recover gracefully by loading whatever now exists instead of

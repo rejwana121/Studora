@@ -85,7 +85,7 @@ export function SessionCard({ token, focus, timezone, showComplete, onDismissCom
 
   async function handleStart() {
     setIsStarting(true);
-    const error = await focus.start(taskId);
+    const error = await focus.start(taskId, taskSnapshot?.status ?? null);
     setIsStarting(false);
     if (error) {
       setStartError(error);

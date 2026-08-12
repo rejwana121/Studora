@@ -10,6 +10,9 @@ type TextFieldDensity = 'default' | 'auth';
 interface TextFieldProps extends TextInputProps {
   label: string;
   error?: string | null;
+  /** Hint shown below the input (undecorated/default path only). Useful for unit or
+   * format guidance — e.g. "e.g. 1, 1.5, 0.75" for the estimate field. */
+  helperText?: string;
   /** Soft tinted leading icon — Auth fields only. Omit for the original undecorated field. */
   icon?: React.ComponentProps<typeof Icon>['name'];
   /** Adds an eye/eye-off toggle for `secureTextEntry` fields — Auth fields only. */
@@ -24,6 +27,7 @@ const ICON_BADGE_SIZE = 32;
 export function TextField({
   label,
   error,
+  helperText,
   secureTextEntry,
   icon,
   showPasswordToggle,
@@ -56,6 +60,11 @@ export function TextField({
           accessibilityLabel={label}
           {...rest}
         />
+        {!!helperText && !error && (
+          <ThemedText type="default" style={styles.helperText}>
+            {helperText}
+          </ThemedText>
+        )}
         {!!error && (
           <ThemedText type="default" style={styles.errorText}>
             {error}
@@ -188,6 +197,11 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: color.risk.high.text,
+    fontSize: typeTokens.caption.fontSize,
+    lineHeight: typeTokens.caption.lineHeight,
+  },
+  helperText: {
+    color: color.text.secondary,
     fontSize: typeTokens.caption.fontSize,
     lineHeight: typeTokens.caption.lineHeight,
   },
